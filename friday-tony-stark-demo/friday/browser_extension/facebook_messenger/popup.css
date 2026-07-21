@@ -1,0 +1,77 @@
+:root {
+  color-scheme: dark;
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  width: 300px;
+  margin: 0;
+  background: #080d12;
+  color: #edf6fa;
+}
+
+main { padding: 18px; }
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid #21313c;
+}
+
+header div { display: grid; gap: 2px; }
+header strong { color: #95e9f5; font-size: 13px; letter-spacing: 0; }
+header span { color: #9cabb4; font-size: 12px; }
+
+.core-mark {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #5ed6e9;
+  border-radius: 50%;
+  background: radial-gradient(circle, #d8fbff 0 8%, #4bc8de 10% 22%, #10242d 24% 55%, #080d12 58%);
+  box-shadow: 0 0 14px rgba(75, 200, 222, 0.35);
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 54px;
+  color: #c7d3d9;
+  font-size: 12px;
+}
+
+.status-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #d2a744;
+  box-shadow: 0 0 8px currentColor;
+}
+
+.status-dot.connected { background: #50d99a; }
+.status-dot.disconnected { background: #ef6974; }
+
+button {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid #315161;
+  border-radius: 6px;
+  background: #10232d;
+  color: #edf6fa;
+  cursor: pointer;
+  font: inherit;
+}
+
+button:hover { background: #16313d; }
+
+p {
+  margin: 13px 0 0;
+  color: #768690;
+  font-size: 11px;
+  line-height: 1.45;
+}

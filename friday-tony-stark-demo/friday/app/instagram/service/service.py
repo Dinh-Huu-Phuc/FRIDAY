@@ -1,0 +1,71 @@
+"""High-level orchestration service for Instagram."""
+
+from __future__ import annotations
+
+from friday.app.instagram.config.settings import InstagramSettings
+from friday.app.instagram.schemas.requests import (
+    GetPostDetailRequest,
+    GetProfileRequest,
+    OpenPlatformRequest,
+    PublishContentRequest,
+    SearchContentRequest,
+)
+from friday.app.instagram.schemas.responses import (
+    ContentDetailResponse,
+    ContentSearchResponse,
+    OpenPlatformResponse,
+    ProfileResponse,
+    PublishContentResponse,
+)
+from friday.app.instagram.service.client import InstagramClient
+from friday.app.instagram.service.mapper import InstagramMapper
+from friday.app.instagram.service.parser import InstagramParser
+
+
+class InstagramService:
+    """Coordinate client, parser, and mapper calls for Instagram."""
+
+    def __init__(
+        self,
+        *,
+        settings: InstagramSettings,
+        client: InstagramClient,
+        parser: InstagramParser,
+        mapper: InstagramMapper,
+    ) -> None:
+        self.settings = settings
+        self.client = client
+        self.parser = parser
+        self.mapper = mapper
+
+    def open_platform_homepage(
+        self,
+        request: OpenPlatformRequest | None = None,
+    ) -> OpenPlatformResponse:
+        _ = request
+        result = self.client.open_homepage()
+        return self.mapper.to_open_response(
+            url=result.url,
+            message=result.message,
+            opened=result.opened_in_new_tab,
+        )
+
+    def get_profile(self, request: GetProfileRequest) -> ProfileResponse:
+        payload = self.client.get_profile(request)
+        entity = self.parser.parse_profile(payload)
+        return self.mapper.to_profile_response(entity)
+
+    def search_content(self, request: SearchContentRequest) -> ContentSearchResponse:
+        payloads = self.client.search_content(request)
+        items = [self.parser.parse_post(payload) for payload in payloads]
+        return self.mapper.to_search_response(query=request.query, items=items)
+
+    def get_post_detail(self, request: GetPostDetailRequest) -> ContentDetailResponse:
+        payload = self.client.get_post_detail(request)
+        entity = self.parser.parse_post(payload)
+        return self.mapper.to_detail_response(entity)
+
+    def publish_content(self, request: PublishContentRequest) -> PublishContentResponse:
+        payload = self.client.publish_content(request)
+        entity = self.parser.parse_post(payload)
+        return self.mapper.to_publish_response(entity)

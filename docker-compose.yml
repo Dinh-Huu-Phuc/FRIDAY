@@ -1,0 +1,45 @@
+services:
+  friday-api:
+    build:
+      context: ./friday-tony-stark-demo
+    env_file:
+      - ./friday-tony-stark-demo/.env
+    environment:
+      FRIDAY_ENV: production
+      FRIDAY_API_HOST: 0.0.0.0
+      FRIDAY_API_PORT: 8001
+      FRIDAY_CORS_ORIGINS: http://localhost:8001,http://127.0.0.1:8001
+    ports:
+      - "8001:8001"
+    restart: unless-stopped
+
+  friday-mcp:
+    build:
+      context: ./friday-tony-stark-demo
+    env_file:
+      - ./friday-tony-stark-demo/.env
+    environment:
+      FRIDAY_ENV: production
+      FRIDAY_MCP_HOST: 0.0.0.0
+      FRIDAY_MCP_PORT: 8000
+      FRIDAY_SPATIAL_API_BASE_URL: http://friday-api:8001/api/v1/spatial
+    ports:
+      - "8000:8000"
+    depends_on:
+      - friday-api
+    restart: unless-stopped
+
+  friday-voice:
+    build:
+      context: ./friday-tony-stark-demo
+    profiles:
+      - voice
+    env_file:
+      - ./friday-tony-stark-demo/.env
+    environment:
+      FRIDAY_ENV: production
+      MCP_SERVER_URL: http://friday-mcp:8000/sse
+    command: ["uv", "run", "friday_voice"]
+    depends_on:
+      - friday-mcp
+    restart: unless-stopped

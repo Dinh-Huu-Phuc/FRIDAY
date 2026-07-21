@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FRIDAY Sleep Display</title>
+    <link rel="stylesheet" href="sleep.css" />
+  </head>
+  <body>
+    <div class="shade" aria-hidden="true"></div>
+
+    <main class="sleep-surface">
+      <section class="weather" aria-label="Current weather in Da Lat">
+        <div class="weather-icon" aria-hidden="true">
+          <span class="icon-aura"></span>
+          <img id="weather-icon-image" alt="" />
+        </div>
+        <div class="weather-copy">
+          <div class="temperature-row">
+            <img id="temperature-icon" alt="" aria-hidden="true" />
+            <span id="temperature">--</span><span class="degree">&deg;C</span>
+          </div>
+          <p id="weather-description">Loading weather</p>
+          <p id="weather-location">Da Lat, Vietnam</p>
+          <div class="solar-times" aria-label="Sunrise and sunset">
+            <span>RISE <time id="sunrise-time">--:--</time></span>
+            <i aria-hidden="true"></i>
+            <span>SET <time id="sunset-time">--:--</time></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="clock" aria-label="Local date and time">
+        <time id="current-time">00:00:00</time>
+        <p id="current-date">Tuesday, July 14, 2026</p>
+        <span class="sleep-state">FRIDAY IS SLEEPING</span>
+      </section>
+    </main>
+
+    <script src="sleep.js"></script>
+  </body>
+</html>

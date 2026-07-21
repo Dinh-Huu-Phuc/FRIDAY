@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FRIDAY Messenger Bridge</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <span class="core-mark" aria-hidden="true"></span>
+        <div>
+          <strong>FRIDAY</strong>
+          <span>Messenger Bridge</span>
+        </div>
+      </header>
+      <section class="status-row" aria-live="polite">
+        <span id="status-dot" class="status-dot"></span>
+        <span id="status-text">Checking local core</span>
+      </section>
+      <button id="open-messages" type="button">Open Messenger</button>
+      <p>Only conversation names and visible message previews are shared with your local FRIDAY core.</p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

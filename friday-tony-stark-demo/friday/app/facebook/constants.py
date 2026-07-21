@@ -1,0 +1,24 @@
+"""Constants shared across the Facebook package."""
+
+from friday.app.common.env import get_env_value
+
+PLATFORM_NAME = "facebook"
+PLATFORM_ALIASES = ("facebook", "fb")
+BASE_URL = "https://graph.facebook.com"
+WEBSITE_URL_ENV = "FACEBOOK_URL"
+WEBSITE_URL = get_env_value(WEBSITE_URL_ENV, "https://facebook.com")
+
+PAGE_ACCESS_TOKEN_ENV = "FACEBOOK_PAGE_ACCESS_TOKEN"
+APP_SECRET_ENV = "FACEBOOK_APP_SECRET"
+VERIFY_TOKEN_ENV = "FACEBOOK_VERIFY_TOKEN"
+PAGE_ID_ENV = "FACEBOOK_PAGE_ID"
+WEBHOOK_STORE_PATH_ENV = "FACEBOOK_WEBHOOK_STORE_PATH"
+WEBHOOK_OBJECT = "page"
+
+DEFAULT_TIMEOUT_SECONDS = 10.0
+DEFAULT_RETRY_COUNT = 1
+
+PRIMARY_RESOURCE_NAME = "page"
+CONTENT_RESOURCE_NAME = "post"
+MESSAGE_RESOURCE_NAME = "messages"
+NOTIFICATION_RESOURCE_NAME = "notifications"

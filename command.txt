@@ -1,0 +1,8 @@
+lệnh làm giao diện đẹp
+npx ui-ux-pro-max-cli init
+
+
+lệnh ollama
+cài đặt: & "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe" pull gemma3:4b
+Kiểm tra: $env:Path += ";$env:LOCALAPPDATA\Programs\Ollama"
+ollama list

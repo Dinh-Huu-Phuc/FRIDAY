@@ -1,0 +1,13 @@
+.uv-cache/
+.uv-python/
+everything/
+.vscode/
+
+command.txt/
+.codex/skills/
+assets/
+/friday-tony-stark-demo/friday/log/image/
+/friday-tony-stark-demo/friday/log/runtime/
+/friday-tony-stark-demo/friday/log/saveLog/
+
+scroll-world/

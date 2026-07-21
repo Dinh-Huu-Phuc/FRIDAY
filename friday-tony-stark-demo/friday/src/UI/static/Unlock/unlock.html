@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>FRIDAY Core Access</title>
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="stylesheet" href="/ui/static/Unlock/unlock.css" />
+  </head>
+  <body>
+    <main class="access-shell">
+      <header class="access-brand" aria-label="FRIDAY Local Core">
+        <div class="brand-mark">
+          <span class="brand-ring" aria-hidden="true"></span>
+          <img src="/favicon.ico" alt="" />
+        </div>
+        <div>
+          <p>FRIDAY</p>
+          <span>LOCAL CORE</span>
+        </div>
+      </header>
+
+      <section class="access-panel" aria-labelledby="access-title">
+        <div class="panel-status">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="mode-label">Checking core status</span>
+        </div>
+
+        <h1 id="access-title">Stand by</h1>
+        <p id="access-subtitle" class="access-subtitle">Connecting to secure storage.</p>
+
+        <form id="access-form" hidden>
+          <label for="password" id="password-label">Passcode</label>
+          <input
+            id="password"
+            name="password"
+            type="password"
+            minlength="8"
+            maxlength="128"
+            autocomplete="current-password"
+            required
+            autofocus
+          />
+
+          <div id="confirmation-field" hidden>
+            <label for="confirmation">Confirm passcode</label>
+            <input
+              id="confirmation"
+              name="confirmation"
+              type="password"
+              minlength="8"
+              maxlength="128"
+              autocomplete="new-password"
+            />
+          </div>
+
+          <p id="access-error" class="access-error" role="alert" aria-live="polite"></p>
+          <button id="submit-button" type="submit">
+            <span id="submit-label">Unlock core</span>
+            <span class="button-arrow" aria-hidden="true">&#8594;</span>
+          </button>
+        </form>
+
+        <p id="recovery-note" class="recovery-note" hidden>
+          No password recovery or reset is available.
+        </p>
+      </section>
+
+      <footer>
+        <span>PRIVATE SYSTEM</span>
+        <span>LOCAL CONNECTION</span>
+      </footer>
+    </main>
+    <script src="/ui/static/Unlock/unlock.js"></script>
+  </body>
+</html>
