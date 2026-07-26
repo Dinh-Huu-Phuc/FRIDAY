@@ -30,7 +30,7 @@ class MessageBubble(QFrame):
         self.content = str(message.get("content") or "")
         role = str(message.get("role") or "assistant")
         self.setObjectName("userBubble" if role == "user" else "assistantBubble")
-        self.setFixedWidth(350)
+        self.setFixedWidth(354)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Maximum)
 
         layout = QVBoxLayout(self)
@@ -62,7 +62,7 @@ class MessageBubble(QFrame):
         body.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         body.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         body.setMarkdown(self.content)
-        body.document().setTextWidth(318)
+        body.document().setTextWidth(322)
         body.setFixedHeight(
             max(32, min(320, math.ceil(body.document().size().height()) + 8))
         )

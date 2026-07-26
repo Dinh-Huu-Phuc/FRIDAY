@@ -14,10 +14,14 @@ from friday.app.sleep_display.mutex import named_mutex
 
 
 WINDOW_TITLE = "FRIDAY Sleep Display"
+BACKGROUND_WINDOW_TITLE = "FRIDAY Sleep Display Background"
+WINDOW_TITLES = {WINDOW_TITLE, BACKGROUND_WINDOW_TITLE}
 WM_CLOSE = 0x0010
+SM_CMONITORS = 80
 _FRIDAY_DIR = Path(__file__).resolve().parents[2]
 _PROJECT_ROOT = _FRIDAY_DIR.parent
 _STATE_PATH = _FRIDAY_DIR / "log" / "runtime" / "sleep_display.json"
+_LOG_PATH = _FRIDAY_DIR / "log" / "runtime" / "sleep_display.log"
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,28 +44,35 @@ def start_sleep_display() -> SleepDisplayResult:
     with named_mutex("FRIDAY_SLEEP_DISPLAY_LIFECYCLE"):
         state = _read_state()
         existing_pid = int(state.get("pid") or 0)
-        if existing_pid and _find_window(existing_pid):
+        if existing_pid and _state_is_ready(state) and _find_window(existing_pid):
             return SleepDisplayResult(True, "start", existing_pid, "Sleep display is already running.")
         _STATE_PATH.unlink(missing_ok=True)
 
         creation_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
             subprocess, "CREATE_NO_WINDOW", 0
         )
-        process = subprocess.Popen(
-            [sys.executable, "-m", "friday.app.sleep_display.app"],
-            cwd=_PROJECT_ROOT,
-            env={**os.environ, "FRIDAY_SLEEP_DISPLAY_CHILD": "1"},
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=creation_flags,
-        )
+        _LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        if _LOG_PATH.is_file() and _LOG_PATH.stat().st_size > 1_000_000:
+            _LOG_PATH.unlink(missing_ok=True)
+        with _LOG_PATH.open("ab") as child_log:
+            process = subprocess.Popen(
+                [sys.executable, "-m", "friday.app.sleep_display.app"],
+                cwd=_PROJECT_ROOT,
+                env={**os.environ, "FRIDAY_SLEEP_DISPLAY_CHILD": "1"},
+                stdin=subprocess.DEVNULL,
+                stdout=child_log,
+                stderr=subprocess.STDOUT,
+                creationflags=creation_flags,
+            )
 
         deadline = time.monotonic() + _startup_timeout()
         while time.monotonic() < deadline:
             state = _read_state()
             display_pid = int(state.get("pid") or 0)
-            if display_pid and bool(state.get("ready")):
+            child_is_alive = display_pid == process.pid and process.poll() is None
+            if display_pid and _state_is_ready(state) and (
+                child_is_alive or _find_window(display_pid)
+            ):
                 return SleepDisplayResult(True, "start", display_pid, "Sleep display is ready.")
             if process.poll() is not None and not display_pid:
                 return SleepDisplayResult(
@@ -70,7 +81,7 @@ def start_sleep_display() -> SleepDisplayResult:
                     process.pid,
                     "Sleep display exited before its window became ready.",
                 )
-            time.sleep(0.1)
+            time.sleep(0.02)
 
         state = _read_state()
         display_pid = int(state.get("pid") or process.pid)
@@ -98,12 +109,15 @@ def stop_sleep_display() -> SleepDisplayResult:
             return SleepDisplayResult(True, "stop", pid, "No active sleep display window was found.")
 
         ctypes.windll.user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
-        deadline = time.monotonic() + 5.0
+        deadline = time.monotonic() + 0.75
         while time.monotonic() < deadline:
             if not _find_window(pid) and not _find_window(0):
                 _STATE_PATH.unlink(missing_ok=True)
                 return SleepDisplayResult(True, "stop", pid, "Sleep display closed.")
-            time.sleep(0.1)
+            time.sleep(0.05)
+        if _terminate_process(pid):
+            _STATE_PATH.unlink(missing_ok=True)
+            return SleepDisplayResult(True, "stop", pid, "Sleep display closed.")
         return SleepDisplayResult(False, "stop", pid, "Sleep display did not close in time.")
 
 
@@ -112,6 +126,23 @@ def _read_state() -> dict:
         return json.loads(_STATE_PATH.read_text(encoding="utf-8"))
     except (OSError, TypeError, ValueError):
         return {}
+
+
+def _state_is_ready(state: dict) -> bool:
+    try:
+        screen_count = int(state.get("screen_count") or 0)
+    except (TypeError, ValueError):
+        return False
+    return bool(state.get("ready")) and screen_count >= _expected_screen_count()
+
+
+def _expected_screen_count() -> int:
+    if os.name != "nt":
+        return 1
+    try:
+        return max(1, int(ctypes.windll.user32.GetSystemMetrics(SM_CMONITORS)))
+    except (AttributeError, OSError, TypeError, ValueError):
+        return 1
 
 
 def _find_window(pid: int) -> int:
@@ -130,7 +161,7 @@ def _find_window(pid: int) -> int:
         length = int(user32.GetWindowTextLengthW(hwnd))
         buffer = ctypes.create_unicode_buffer(length + 1)
         user32.GetWindowTextW(hwnd, buffer, len(buffer))
-        if buffer.value.strip() == WINDOW_TITLE:
+        if buffer.value.strip() in WINDOW_TITLES:
             handles.append(int(hwnd))
             return False
         return True
@@ -147,12 +178,34 @@ def _window_process_id(hwnd: int) -> int:
     return int(process_id.value)
 
 
+def _terminate_process(pid: int) -> bool:
+    if os.name != "nt" or pid <= 0 or pid == os.getpid():
+        return False
+    kernel32 = ctypes.windll.kernel32
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel32.TerminateProcess.restype = wintypes.BOOL
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    process_handle = kernel32.OpenProcess(0x0001 | 0x00100000, False, pid)
+    if not process_handle:
+        return not bool(_find_window(pid))
+    try:
+        terminated = bool(kernel32.TerminateProcess(process_handle, 0))
+        if terminated:
+            kernel32.WaitForSingleObject(process_handle, 1_000)
+        return terminated
+    finally:
+        kernel32.CloseHandle(process_handle)
+
+
 def _enabled() -> bool:
     return os.getenv("FRIDAY_SLEEP_DISPLAY_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
 
 
 def _startup_timeout() -> float:
     try:
-        return max(2.0, float(os.getenv("FRIDAY_SLEEP_DISPLAY_STARTUP_TIMEOUT", "10")))
+        return max(1.0, float(os.getenv("FRIDAY_SLEEP_DISPLAY_STARTUP_TIMEOUT", "4")))
     except ValueError:
-        return 10.0
+        return 4.0

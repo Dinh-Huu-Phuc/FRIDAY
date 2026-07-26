@@ -32,6 +32,42 @@ class FakeBrightnessBackend:
 
 
 class SleepDisplayTests(unittest.TestCase):
+    def test_process_state_requires_every_connected_monitor(self) -> None:
+        from friday.app.sleep_display import process_manager
+
+        user32 = Mock()
+        user32.GetSystemMetrics.return_value = 3
+        with (
+            patch.object(process_manager.os, "name", "nt"),
+            patch.object(process_manager.ctypes, "windll", Mock(user32=user32)),
+        ):
+            self.assertFalse(
+                process_manager._state_is_ready({"ready": True, "screen_count": 2})
+            )
+            self.assertTrue(
+                process_manager._state_is_ready({"ready": True, "screen_count": 3})
+            )
+
+    def test_process_state_write_retries_when_windows_temporarily_locks_file(self) -> None:
+        from friday.app.sleep_display import app
+
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "sleep_display.json"
+            with (
+                patch.object(app, "_STATE_PATH", state_path),
+                patch.object(app.time, "sleep") as sleep,
+                patch.object(
+                    Path,
+                    "replace",
+                    autospec=True,
+                    side_effect=[PermissionError("busy"), state_path],
+                ) as replace,
+            ):
+                app._write_process_state(ready=True, screen_count=3)
+
+        self.assertEqual(replace.call_count, 2)
+        sleep.assert_called_once_with(0.01)
+
     def test_stop_finds_sleep_window_when_pid_state_is_missing(self) -> None:
         from friday.app.sleep_display import process_manager
 
@@ -122,7 +158,7 @@ class SleepDisplayTests(unittest.TestCase):
     @patch("friday.app.power.sleep_environment.start_sleep_display")
     @patch("friday.app.power.sleep_environment.dim_displays")
     @patch("friday.app.power.sleep_environment.WindowSleepManager")
-    def test_sleep_environment_starts_only_after_windows_are_minimized(
+    def test_sleep_environment_starts_display_before_windows_are_minimized(
         self,
         manager_class: Mock,
         dim_displays: Mock,
@@ -141,7 +177,7 @@ class SleepDisplayTests(unittest.TestCase):
         result = minimize_application_windows()
 
         self.assertTrue(result.ok)
-        self.assertEqual(events, ["minimize", "dim", "display"])
+        self.assertEqual(events, ["display", "minimize", "dim"])
 
     @patch("friday.app.power.sleep_environment.WindowSleepManager")
     @patch("friday.app.power.sleep_environment.restore_displays")

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from functools import lru_cache
 from pathlib import Path
 
 from friday.about.schemas_about import AboutDocument
@@ -58,6 +57,36 @@ def _response_key(section_name: str) -> str | None:
     return match.group(1).lower() if match else None
 
 
+def _normalized_key(value: str) -> str:
+    return "_".join(re.findall(r"[a-z0-9]+", value.casefold()))
+
+
+def _trigger_topic(section_name: str) -> str | None:
+    match = re.match(r"^(.*?)\s*Triggers?$", section_name, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return _normalized_key(match.group(1)) or "introduction"
+
+
+def _response_descriptor(section_name: str) -> tuple[str, str, str] | None:
+    legacy_key = _response_key(section_name)
+    if legacy_key is not None:
+        return "introduction", "en", legacy_key
+    if not section_name.casefold().endswith(" response"):
+        return None
+
+    words = section_name[: -len(" response")].split()
+    language = "en"
+    mode = "full"
+    if words and words[0].casefold() == "vietnamese":
+        language = "vi"
+        words.pop(0)
+    if words and words[0].casefold() in {"full", "short", "voice"}:
+        mode = words.pop(0).casefold()
+    topic = _normalized_key(" ".join(words)) or "introduction"
+    return topic, language, mode
+
+
 def _section(sections: dict[str, str], *names: str) -> str:
     expected = {name.casefold() for name in names}
     for section_name, body in sections.items():
@@ -71,23 +100,42 @@ def load_about_document(path: Path) -> AboutDocument:
     sections = _split_sections(markdown)
     title = sections.get("__preamble__", "").strip().lstrip("# ").strip() or path.stem
     responses: dict[str, str] = {}
+    trigger_groups: dict[str, tuple[str, ...]] = {}
 
     for section_name, section_body in sections.items():
-        key = _response_key(section_name)
-        if key and section_body:
-            responses[key] = section_body
+        trigger_topic = _trigger_topic(section_name)
+        if trigger_topic is not None:
+            trigger_groups[trigger_topic] = _parse_trigger_lines(section_body)
+
+        descriptor = _response_descriptor(section_name)
+        if descriptor is None or not section_body:
+            continue
+        topic, language, mode = descriptor
+        responses[f"{topic}_{language}_{mode}"] = section_body
+        if topic == "introduction":
+            responses[f"{language}_{mode}"] = section_body
+            if language == "en":
+                responses[mode] = section_body
+
+    introduction_triggers = trigger_groups.get("introduction", ())
 
     return AboutDocument(
         id=_slug_from_filename(path),
         path=path,
         title=title,
-        triggers=_parse_trigger_lines(_section(sections, "Trigger", "Triggers")),
+        triggers=introduction_triggers,
+        trigger_groups=trigger_groups,
         responses=responses,
-        important_rule=_section(sections, "Important Rule", "Safety Rule"),
+        sections={_normalized_key(key): value for key, value in sections.items()},
+        important_rule=_section(
+            sections,
+            "Important Rule",
+            "Safety Rule",
+            "Safety and Accuracy Rules",
+        ),
     )
 
 
-@lru_cache(maxsize=1)
 def load_about_documents() -> dict[str, AboutDocument]:
     documents: dict[str, AboutDocument] = {}
     for path in sorted(ABOUT_MESSAGES_DIR.glob("*.md")):

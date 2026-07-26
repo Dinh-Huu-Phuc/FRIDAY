@@ -18,6 +18,7 @@ from fastapi.responses import RedirectResponse
 
 from friday.src.config.settings import get_settings
 from friday.src.common.local_access import LocalAccessMiddleware
+from friday.src.common.runtime_logging import configure_runtime_logging
 from friday.src.router.api_router import api_router
 from friday.src.sse.routes import router as sse_router
 from friday.src.UI.routes import router as web_ui_router, mount_web_ui_static
@@ -157,6 +158,7 @@ def _open_ui_when_ready(server: uvicorn.Server, url: str, configured_path: str =
 
 
 def main() -> None:
+    configure_runtime_logging()
     settings = get_settings()
     config = uvicorn.Config(
         "friday.src.main:app",
@@ -165,6 +167,7 @@ def main() -> None:
         http="h11",
         reload=False,
         server_header=False,
+        access_log=settings.access_log,
     )
     server = uvicorn.Server(config)
 

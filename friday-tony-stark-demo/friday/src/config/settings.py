@@ -32,6 +32,7 @@ class Settings:
     environment: str = os.getenv("FRIDAY_ENV", "local")
     host: str = os.getenv("FRIDAY_API_HOST", "127.0.0.1")
     port: int = int(os.getenv("FRIDAY_API_PORT", "8001"))
+    access_log: bool = os.getenv("FRIDAY_ACCESS_LOG", "false").lower() in {"1", "true", "yes", "on"}
     local_only: bool = os.getenv("FRIDAY_LOCAL_ONLY", "true").lower() in {"1", "true", "yes", "on"}
     expose_api_docs: bool = os.getenv("FRIDAY_EXPOSE_API_DOCS", "false").lower() in {"1", "true", "yes", "on"}
     auto_open_browser: bool = os.getenv("FRIDAY_AUTO_OPEN_BROWSER", "true").lower() in {"1", "true", "yes", "on"}

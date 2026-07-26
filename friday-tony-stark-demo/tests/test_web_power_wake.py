@@ -52,6 +52,32 @@ class WebPowerWakeTests(unittest.TestCase):
     def test_wake_retries_restore_when_state_is_already_active(self) -> None:
         self._wake("active").assert_called_once_with()
 
+    def test_sleep_starts_the_sleep_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(
+                os.environ,
+                self._environment(directory, "active"),
+                clear=False,
+            ):
+                initialize_power_state(source="test")
+                console = Mock()
+                console.send_assistant_reply.return_value = {"ok": True}
+                with (
+                    patch(
+                        "friday.src.services.agent.service.get_agent_console_service",
+                        return_value=console,
+                    ),
+                    patch(
+                        "friday.src.services.agent.service.minimize_application_windows"
+                    ) as minimize,
+                ):
+                    result = asyncio.run(
+                        chat(ConsoleChatRequest(message="FRIDAY sleep"))
+                    )
+
+                self.assertEqual(result, {"ok": True})
+                minimize.assert_called_once_with()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import os
 import asyncio
+import os
 import re
+import time
 import unicodedata
 from datetime import datetime
 from functools import lru_cache
@@ -20,12 +21,29 @@ from friday.app.browser_automation import (
     run_browser_search,
     run_platform_video_search,
 )
-from friday.app.computer import is_screen_understanding_request, understand_current_screen
-from friday.app.messenger import check_latest_messenger_message, is_messenger_latest_request
+from friday.app.code_map import handle_code_map_message
+from friday.app.computer import (
+    is_screen_understanding_request,
+    understand_current_screen,
+)
+from friday.app.core_workspace import build_workspace_context
+from friday.app.messenger import (
+    check_latest_messenger_message,
+    is_messenger_latest_request,
+)
+from friday.app.neural_visual import (
+    NeuralEventStatus,
+    NeuralNodeId,
+    emit_neural_activity,
+    emit_neural_transfer,
+    handle_neural_visual_message,
+    new_neural_trace_id,
+)
 from friday.app.power import (
     PowerIntent,
     detect_power_intent,
     handle_power_message,
+    minimize_application_windows,
     restore_application_windows,
 )
 from friday.app.research import (
@@ -33,15 +51,16 @@ from friday.app.research import (
     is_web_research_request,
     research_public_web,
 )
-from friday.app.core_workspace import build_workspace_context
 from friday.config import config
 from friday.core.llm import OpenAICompatibleChatClient, StaticLLMClient
 from friday.core.schemas import ChatMessage, LLMRequest
-from friday.gmail_system_agent import check_unread_gmail_with_timeout, format_gmail_voice_report
+from friday.gmail_system_agent import (
+    check_unread_gmail_with_timeout,
+    format_gmail_voice_report,
+)
 from friday.news import NewsService
 from friday.runtime_context import resolve_runtime_location
 from friday.search import get_weather_snapshot, resolve_vietnam_city
-
 
 REST_AGENT_SYSTEM_PROMPT = """You are FRIDAY, Tony Stark's practical AI operator for this local project.
 
@@ -338,96 +357,399 @@ async def build_startup_briefing() -> str:
     )
 
 
+def _begin_neural_request(payload: ConsoleChatRequest) -> str:
+    trace_id = payload.trace_id or new_neural_trace_id()
+    source = (
+        NeuralNodeId.SPEECH_RECOGNITION
+        if payload.channel == "voice"
+        else NeuralNodeId.TEXT_INPUT
+    )
+    emit_neural_transfer(
+        source,
+        NeuralNodeId.INTENT_ROUTER,
+        trace_id=trace_id,
+        event_type="intent.routing.started",
+        summary=payload.message,
+    )
+    return trace_id
+
+
+def _route_neural_request(
+    trace_id: str,
+    target_node: str,
+    *,
+    event_type: str,
+    summary: str,
+) -> float:
+    emit_neural_transfer(
+        NeuralNodeId.INTENT_ROUTER,
+        target_node,
+        trace_id=trace_id,
+        event_type=event_type,
+        summary=summary,
+    )
+    return time.perf_counter()
+
+
+def _send_neural_reply(
+    payload: ConsoleChatRequest,
+    *,
+    trace_id: str,
+    source_node: str,
+    assistant_content: str,
+    event_type: str,
+    started_at: float | None = None,
+    status: NeuralEventStatus = NeuralEventStatus.SUCCESS,
+) -> dict:
+    duration_ms = (
+        (time.perf_counter() - started_at) * 1000
+        if started_at is not None
+        else None
+    )
+    emit_neural_transfer(
+        source_node,
+        NeuralNodeId.RESPONSE,
+        trace_id=trace_id,
+        event_type=event_type,
+        summary=assistant_content,
+        status=status,
+        duration_ms=duration_ms,
+    )
+    snapshot = get_agent_console_service().send_assistant_reply(
+        payload,
+        assistant_content=assistant_content,
+    )
+    emit_neural_transfer(
+        NeuralNodeId.RESPONSE,
+        NeuralNodeId.UI,
+        trace_id=trace_id,
+        event_type="response.displayed",
+        summary=assistant_content,
+        status=status,
+    )
+    return snapshot
+
+
+def _send_neural_snapshot(
+    payload: ConsoleChatRequest,
+    *,
+    trace_id: str,
+    source_node: str,
+    snapshot: dict,
+    summary: str,
+    event_type: str,
+    started_at: float | None = None,
+) -> dict:
+    duration_ms = (
+        (time.perf_counter() - started_at) * 1000
+        if started_at is not None
+        else None
+    )
+    emit_neural_transfer(
+        source_node,
+        NeuralNodeId.RESPONSE,
+        trace_id=trace_id,
+        event_type=event_type,
+        summary=summary,
+        status=NeuralEventStatus.SUCCESS,
+        duration_ms=duration_ms,
+    )
+    emit_neural_transfer(
+        NeuralNodeId.RESPONSE,
+        NeuralNodeId.UI,
+        trace_id=trace_id,
+        event_type="response.displayed",
+        summary=summary,
+        status=NeuralEventStatus.SUCCESS,
+    )
+    return snapshot
+
+
 async def chat(payload: ConsoleChatRequest) -> dict:
+    trace_id = _begin_neural_request(payload)
     power_intent = detect_power_intent(payload.message)
     power_result = handle_power_message(
         payload.message,
-        source=f"web:{payload.session_id}",
+        source=f"web:{payload.session_id}:{payload.channel}",
         silent_when_sleeping=payload.channel == "voice",
     )
     if power_result.handled:
-        if power_intent == PowerIntent.WAKE:
+        started_at = _route_neural_request(
+            trace_id,
+            NeuralNodeId.POWER,
+            event_type="power.command",
+            summary=payload.message,
+        )
+        if power_intent == PowerIntent.SLEEP:
+            await asyncio.to_thread(minimize_application_windows)
+        elif power_intent == PowerIntent.WAKE:
             await asyncio.to_thread(restore_application_windows)
         if not power_result.reply:
-            return get_agent_console_service().get_snapshot(session_id=payload.session_id)
-        return get_agent_console_service().send_assistant_reply(
+            return _send_neural_snapshot(
+                payload,
+                trace_id=trace_id,
+                source_node=NeuralNodeId.POWER,
+                snapshot=get_agent_console_service().get_snapshot(
+                    session_id=payload.session_id
+                ),
+                summary="Power state updated without a spoken response",
+                event_type="power.completed",
+                started_at=started_at,
+            )
+        return _send_neural_reply(
             payload,
+            trace_id=trace_id,
+            source_node=NeuralNodeId.POWER,
             assistant_content=power_result.reply,
+            event_type="power.completed",
+            started_at=started_at,
+        )
+
+    code_map_result = handle_code_map_message(payload.message)
+    if code_map_result.handled:
+        started_at = _route_neural_request(
+            trace_id,
+            NeuralNodeId.LOCAL_TOOLS,
+            event_type="local_tool.code_map",
+            summary=payload.message,
+        )
+        return _send_neural_reply(
+            payload,
+            trace_id=trace_id,
+            source_node=NeuralNodeId.LOCAL_TOOLS,
+            assistant_content=code_map_result.message,
+            event_type="local_tool.completed",
+            started_at=started_at,
+        )
+
+    neural_visual_result = handle_neural_visual_message(payload.message)
+    if neural_visual_result.handled:
+        started_at = _route_neural_request(
+            trace_id,
+            NeuralNodeId.LOCAL_TOOLS,
+            event_type="local_tool.neural_view",
+            summary=payload.message,
+        )
+        return _send_neural_reply(
+            payload,
+            trace_id=trace_id,
+            source_node=NeuralNodeId.LOCAL_TOOLS,
+            assistant_content=neural_visual_result.message,
+            event_type="local_tool.completed",
+            started_at=started_at,
         )
 
     if is_binance_market_request(payload.message):
+        started_at = _route_neural_request(
+            trace_id,
+            NeuralNodeId.BROWSER,
+            event_type="browser.binance.started",
+            summary=payload.message,
+        )
         binance_result = await asyncio.to_thread(run_binance_market, payload.message)
-        return get_agent_console_service().send_assistant_reply(
+        return _send_neural_reply(
             payload,
+            trace_id=trace_id,
+            source_node=NeuralNodeId.BROWSER,
             assistant_content=binance_result.message,
+            event_type="browser.binance.completed",
+            started_at=started_at,
         )
 
     if is_platform_video_search_request(payload.message):
+        started_at = _route_neural_request(
+            trace_id,
+            NeuralNodeId.BROWSER,
+            event_type="browser.video_search.started",
+            summary=payload.message,
+        )
         video_result = await asyncio.to_thread(
             run_platform_video_search,
             payload.message,
         )
-        return get_agent_console_service().send_assistant_reply(
+        return _send_neural_reply(
             payload,
+            trace_id=trace_id,
+            source_node=NeuralNodeId.BROWSER,
             assistant_content=video_result.message,
+            event_type="browser.video_search.completed",
+            started_at=started_at,
         )
 
     if is_browser_search_request(payload.message):
+        started_at = _route_neural_request(
+            trace_id,
+            NeuralNodeId.BROWSER,
+            event_type="browser.search.started",
+            summary=payload.message,
+        )
         browser_result = await asyncio.to_thread(run_browser_search, payload.message)
-        return get_agent_console_service().send_assistant_reply(
+        return _send_neural_reply(
             payload,
+            trace_id=trace_id,
+            source_node=NeuralNodeId.BROWSER,
             assistant_content=browser_result.message,
+            event_type="browser.search.completed",
+            started_at=started_at,
         )
 
     if is_messenger_latest_request(payload.message):
+        started_at = _route_neural_request(
+            trace_id,
+            NeuralNodeId.INTEGRATIONS,
+            event_type="integration.messenger.started",
+            summary=payload.message,
+        )
         messenger_result = await asyncio.to_thread(check_latest_messenger_message)
-        return get_agent_console_service().send_assistant_reply(
+        return _send_neural_reply(
             payload,
+            trace_id=trace_id,
+            source_node=NeuralNodeId.INTEGRATIONS,
             assistant_content=messenger_result.message,
+            event_type="integration.messenger.completed",
+            started_at=started_at,
         )
 
     if is_screen_understanding_request(payload.message):
+        started_at = _route_neural_request(
+            trace_id,
+            NeuralNodeId.SCREEN_VISION,
+            event_type="vision.screen.started",
+            summary=payload.message,
+        )
         screen_reply = await understand_current_screen(payload.message)
-        return get_agent_console_service().send_assistant_reply(
+        return _send_neural_reply(
             payload,
+            trace_id=trace_id,
+            source_node=NeuralNodeId.SCREEN_VISION,
             assistant_content=screen_reply,
+            event_type="vision.screen.completed",
+            started_at=started_at,
         )
 
     if is_social_open_request(payload.message):
+        started_at = _route_neural_request(
+            trace_id,
+            NeuralNodeId.BROWSER,
+            event_type="browser.social.started",
+            summary=payload.message,
+        )
         social_reply = await asyncio.to_thread(open_social_platform, payload.message)
-        return get_agent_console_service().send_assistant_reply(
+        return _send_neural_reply(
             payload,
+            trace_id=trace_id,
+            source_node=NeuralNodeId.BROWSER,
             assistant_content=social_reply,
+            event_type="browser.social.completed",
+            started_at=started_at,
         )
 
     if _is_computer_command(payload.message):
-        return send_console_message(payload)
+        started_at = _route_neural_request(
+            trace_id,
+            NeuralNodeId.LOCAL_TOOLS,
+            event_type="local_tool.computer.started",
+            summary=payload.message,
+        )
+        return _send_neural_snapshot(
+            payload,
+            trace_id=trace_id,
+            source_node=NeuralNodeId.LOCAL_TOOLS,
+            snapshot=send_console_message(payload),
+            summary="Local computer command completed",
+            event_type="local_tool.computer.completed",
+            started_at=started_at,
+        )
 
     about_match = match_about_response(payload.message, response_type="voice")
     if about_match.matched:
-        return get_agent_console_service().send_assistant_reply(
+        started_at = _route_neural_request(
+            trace_id,
+            NeuralNodeId.MEMORY,
+            event_type="memory.about.lookup",
+            summary=payload.message,
+        )
+        return _send_neural_reply(
             payload,
+            trace_id=trace_id,
+            source_node=NeuralNodeId.MEMORY,
             assistant_content=about_match.response,
+            event_type="memory.about.completed",
+            started_at=started_at,
         )
 
     if _is_weather_command(payload.message):
+        started_at = _route_neural_request(
+            trace_id,
+            NeuralNodeId.LIVE_SEARCH,
+            event_type="search.weather.started",
+            summary=payload.message,
+        )
         weather_reply = await _build_weather_reply(payload.message)
-        return get_agent_console_service().send_assistant_reply(
+        return _send_neural_reply(
             payload,
+            trace_id=trace_id,
+            source_node=NeuralNodeId.LIVE_SEARCH,
             assistant_content=weather_reply,
+            event_type="search.weather.completed",
+            started_at=started_at,
         )
 
     if _is_gmail_command(payload.message):
+        started_at = _route_neural_request(
+            trace_id,
+            NeuralNodeId.INTEGRATIONS,
+            event_type="integration.gmail.started",
+            summary=payload.message,
+        )
         result = await check_unread_gmail_with_timeout()
-        return get_agent_console_service().send_assistant_reply(
+        return _send_neural_reply(
             payload,
+            trace_id=trace_id,
+            source_node=NeuralNodeId.INTEGRATIONS,
             assistant_content=format_gmail_voice_report(result),
+            event_type="integration.gmail.completed",
+            started_at=started_at,
         )
 
+    context_started_at = _route_neural_request(
+        trace_id,
+        NeuralNodeId.MEMORY,
+        event_type="context.build.started",
+        summary=payload.message,
+    )
     history = _build_history_messages(payload.session_id)
     workspace_context = build_workspace_context(payload.message)
+    emit_neural_activity(
+        NeuralNodeId.MEMORY,
+        trace_id=trace_id,
+        event_type="context.build.completed",
+        summary=(
+            f"Prepared {len(history)} conversation messages and workspace context"
+        ),
+        status=NeuralEventStatus.SUCCESS,
+        duration_ms=(time.perf_counter() - context_started_at) * 1000,
+    )
+    news_check_started = time.perf_counter()
+    emit_neural_transfer(
+        NeuralNodeId.MEMORY,
+        NeuralNodeId.LIVE_SEARCH,
+        trace_id=trace_id,
+        event_type="search.intent_check.started",
+        summary="Checking whether current public information is required",
+    )
     news_result = await asyncio.to_thread(_get_news_result, payload.message)
     news_context = _build_news_context_from_result(news_result)
+    emit_neural_activity(
+        NeuralNodeId.LIVE_SEARCH,
+        trace_id=trace_id,
+        event_type="search.intent_check.completed",
+        summary=(
+            f"Live news intent: {bool(news_result and news_result.is_news_intent)}"
+        ),
+        status=NeuralEventStatus.SUCCESS,
+        duration_ms=(time.perf_counter() - news_check_started) * 1000,
+    )
     web_research_context = ""
     research_failure = ""
 
@@ -441,17 +763,42 @@ async def chat(payload: ConsoleChatRequest) -> dict:
         and is_web_research_request(payload.message)
     )
     if should_fallback_from_news or should_research_question:
+        research_started_at = time.perf_counter()
+        emit_neural_activity(
+            NeuralNodeId.LIVE_SEARCH,
+            trace_id=trace_id,
+            event_type="search.web.started",
+            summary=payload.message,
+        )
         research_result = await asyncio.to_thread(research_public_web, payload.message)
         web_research_context = build_web_research_context(research_result)
+        emit_neural_activity(
+            NeuralNodeId.LIVE_SEARCH,
+            trace_id=trace_id,
+            event_type="search.web.completed",
+            summary=(
+                f"Public web research read {len(research_result.sources)} sources"
+            ),
+            status=(
+                NeuralEventStatus.SUCCESS
+                if web_research_context
+                else NeuralEventStatus.ERROR
+            ),
+            duration_ms=(time.perf_counter() - research_started_at) * 1000,
+        )
         if web_research_context:
             news_context = ""
         elif should_research_question:
             research_failure = research_result.message
 
     if research_failure:
-        return get_agent_console_service().send_assistant_reply(
+        return _send_neural_reply(
             payload,
+            trace_id=trace_id,
+            source_node=NeuralNodeId.LIVE_SEARCH,
             assistant_content=research_failure,
+            event_type="search.web.failed",
+            status=NeuralEventStatus.ERROR,
         )
 
     messages = [
@@ -473,21 +820,42 @@ async def chat(payload: ConsoleChatRequest) -> dict:
         max_tokens=int(os.getenv("FRIDAY_AGENT_MAX_TOKENS", "900")),
     )
 
+    llm_source = (
+        NeuralNodeId.LIVE_SEARCH
+        if news_context or web_research_context
+        else NeuralNodeId.MEMORY
+    )
+    llm_started_at = time.perf_counter()
+    emit_neural_transfer(
+        llm_source,
+        NeuralNodeId.LLM,
+        trace_id=trace_id,
+        event_type="llm.response.started",
+        summary=f"Generating with model {request.model}",
+    )
+    llm_status = NeuralEventStatus.SUCCESS
     try:
         response = await _build_llm_client().complete(request)
         content = response.content.strip()
     except Exception as exc:
         content = _build_llm_error_message(exc)
+        llm_status = NeuralEventStatus.ERROR
 
     if not content:
         content = (
             "The LLM provider returned an empty response. "
             "Try a shorter question or check the configured model."
         )
+        llm_status = NeuralEventStatus.ERROR
 
-    return get_agent_console_service().send_assistant_reply(
+    return _send_neural_reply(
         payload,
+        trace_id=trace_id,
+        source_node=NeuralNodeId.LLM,
         assistant_content=content,
+        event_type="llm.response.completed",
+        started_at=llm_started_at,
+        status=llm_status,
     )
 
 

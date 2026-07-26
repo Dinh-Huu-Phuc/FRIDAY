@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,7 @@ PowerState = Literal["active", "sleeping"]
 _LOCK = threading.RLock()
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_STATE_PATH = _PROJECT_ROOT / "friday" / "log" / "runtime" / "power_state.json"
+_LAST_SNAPSHOT: tuple[Path, PowerSnapshot] | None = None
 
 
 def _now_iso() -> str:
@@ -58,12 +60,23 @@ class PowerCommandResult:
 
 
 def _write_snapshot(snapshot: PowerSnapshot) -> PowerSnapshot:
+    global _LAST_SNAPSHOT
     path = _state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
     temporary.write_text(json.dumps(snapshot.to_dict(), indent=2), encoding="utf-8")
-    temporary.replace(path)
-    return snapshot
+    try:
+        for attempt in range(10):
+            try:
+                temporary.replace(path)
+                _LAST_SNAPSHOT = (path, snapshot)
+                return snapshot
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.01)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def initialize_power_state(*, source: str = "startup") -> PowerSnapshot:
@@ -72,20 +85,30 @@ def initialize_power_state(*, source: str = "startup") -> PowerSnapshot:
 
 
 def get_power_state() -> PowerSnapshot:
+    global _LAST_SNAPSHOT
     with _LOCK:
         path = _state_path()
         if not path.is_file():
+            if _LAST_SNAPSHOT is not None and _LAST_SNAPSHOT[0] == path:
+                return _LAST_SNAPSHOT[1]
             return initialize_power_state(source="implicit_startup")
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            state: PowerState = "sleeping" if payload.get("state") == "sleeping" else "active"
-            return PowerSnapshot(
-                state=state,
-                changed_at=str(payload.get("changed_at") or _now_iso()),
-                source=str(payload.get("source") or "unknown"),
-            )
-        except (OSError, ValueError, TypeError):
-            return initialize_power_state(source="state_recovery")
+        for attempt in range(5):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                state: PowerState = "sleeping" if payload.get("state") == "sleeping" else "active"
+                snapshot = PowerSnapshot(
+                    state=state,
+                    changed_at=str(payload.get("changed_at") or _now_iso()),
+                    source=str(payload.get("source") or "unknown"),
+                )
+                _LAST_SNAPSHOT = (path, snapshot)
+                return snapshot
+            except (OSError, ValueError, TypeError):
+                if attempt < 4:
+                    time.sleep(0.01)
+        if _LAST_SNAPSHOT is not None and _LAST_SNAPSHOT[0] == path:
+            return _LAST_SNAPSHOT[1]
+        return initialize_power_state(source="state_recovery")
 
 
 def set_power_state(state: PowerState, *, source: str) -> PowerSnapshot:

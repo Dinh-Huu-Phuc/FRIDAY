@@ -11,3 +11,7 @@ assets/
 /friday-tony-stark-demo/friday/log/saveLog/
 
 scroll-world/
+
+codegraph/
+.codegraph/
+.grapuco/

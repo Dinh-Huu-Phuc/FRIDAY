@@ -10,7 +10,9 @@ class AboutDocument:
     path: Path
     title: str
     triggers: tuple[str, ...] = field(default_factory=tuple)
+    trigger_groups: dict[str, tuple[str, ...]] = field(default_factory=dict)
     responses: dict[str, str] = field(default_factory=dict)
+    sections: dict[str, str] = field(default_factory=dict)
     important_rule: str = ""
 
 

@@ -23,6 +23,8 @@ class ConsoleChatRequest(BaseModel):
     message: str
     channel: Literal["text", "voice"] = "text"
     session_id: str = "browser-console"
+    trace_id: str = ""
+    trace_id: str = ""
 
 
 class ConsoleState(BaseModel):

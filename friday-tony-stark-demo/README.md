@@ -211,6 +211,31 @@ http://127.0.0.1:8001/docs
 
 Set `FRIDAY_DESKTOP_UI_ENABLED=false` to use the compatibility browser UI as the launcher again. Set `FRIDAY_DESKTOP_STARTUP_BRIEFING=true` only when you want the slower live weather/news briefing at desktop startup.
 
+### Code Map window
+
+The desktop UI can open Grapuco in a separate native PySide6 window while keeping its browser session in a local persistent profile. Use one of these exact commands:
+
+```text
+FRIDAY open code map
+FRIDAY close code map
+```
+
+The window includes back, forward, reload, dashboard, full-screen, and close controls. Opening it again focuses the existing window instead of creating a duplicate. It also closes automatically when FRIDAY enters sleep mode.
+
+Configuration:
+
+```dotenv
+FRIDAY_CODE_MAP_ENABLED=true
+FRIDAY_CODE_MAP_URL=https://grapuco.com/dashboard
+FRIDAY_CODE_MAP_PROFILE_PATH=friday/log/runtime/code_map_profile
+```
+
+After signing in and opening a repository once, FRIDAY remembers the latest Grapuco repository URL for the next launch. The profile stays under the ignored runtime log directory and is not committed.
+
+The graph appears only after Grapuco has indexed a repository. From the dashboard, use **Upload Repository** for a ZIP of the project, or initialize and ingest from the project root with the Grapuco CLI. When indexing finishes, open **Repositories**, select the repository, and choose **Analyze** to display its nodes and edges.
+
+Provider retry details are written to `friday/log/runtime/friday-warnings.log` instead of flooding the terminal. Set `FRIDAY_VERBOSE_PROVIDER_LOGS=true`, `FRIDAY_CODE_MAP_JS_CONSOLE=true`, or `FRIDAY_ACCESS_LOG=true` only while debugging.
+
 Recommended local process layout:
 
 | Terminal | Command | Used by |

@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -13,19 +14,14 @@ from uuid import uuid4
 
 from PySide6.QtCore import QObject, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QCursor, QScreen
-from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
-from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import QApplication, QMainWindow
+from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QVBoxLayout, QWidget
 
 from friday.app.sleep_display.icon_resolver import (
     resolve_temperature_icon,
     resolve_weather_icon,
 )
-from friday.search import get_weather_snapshot
-
-
 WINDOW_TITLE = "FRIDAY Sleep Display"
 BACKGROUND_WINDOW_TITLE = "FRIDAY Sleep Display Background"
 _FRIDAY_DIR = Path(__file__).resolve().parents[2]
@@ -50,25 +46,58 @@ class VideoBackgroundWindow(QMainWindow):
     def __init__(self, screen: QScreen) -> None:
         super().__init__()
         self.screen = screen
+        self._closing_for_screen_change = False
         self.setWindowTitle(BACKGROUND_WINDOW_TITLE)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
         self.setCursor(QCursor(Qt.CursorShape.BlankCursor))
 
-        self.video_widget = QVideoWidget(self)
-        self.video_widget.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatioByExpanding)
-        self.setCentralWidget(self.video_widget)
+        self.media_player = None
+        if _video_background_enabled() and _VIDEO_PATH.is_file():
+            from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+            from PySide6.QtMultimediaWidgets import QVideoWidget
 
-        self.audio_output = QAudioOutput(self)
-        self.audio_output.setMuted(True)
-        self.media_player = QMediaPlayer(self)
-        self.media_player.setAudioOutput(self.audio_output)
-        self.media_player.setVideoOutput(self.video_widget)
-        self.media_player.setLoops(QMediaPlayer.Loops.Infinite)
-        self.media_player.setSource(QUrl.fromLocalFile(str(_VIDEO_PATH)))
+            video_widget = QVideoWidget(self)
+            video_widget.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatioByExpanding)
+            self.setCentralWidget(video_widget)
+            audio_output = QAudioOutput(self)
+            audio_output.setMuted(True)
+            media_player = QMediaPlayer(self)
+            media_player.setAudioOutput(audio_output)
+            media_player.setVideoOutput(video_widget)
+            media_player.setLoops(QMediaPlayer.Loops.Infinite)
+            media_player.setSource(QUrl.fromLocalFile(str(_VIDEO_PATH)))
+            self.audio_output = audio_output
+            self.media_player = media_player
+        else:
+            background = QWidget(self)
+            background.setStyleSheet("background: #00070a; color: #58e6ef;")
+            layout = QVBoxLayout(background)
+            layout.setContentsMargins(24, 24, 24, 24)
+            layout.addStretch(1)
+            status = QLabel("FRIDAY  //  SLEEP MODE", background)
+            status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            status.setStyleSheet(
+                "font-size: 18px; font-weight: 600; letter-spacing: 0px;"
+            )
+            layout.addWidget(status)
+            layout.addStretch(1)
+            self.setCentralWidget(background)
 
     def start(self) -> None:
-        _cover_screen(self, self.screen, topmost=False)
-        self.media_player.play()
+        _cover_screen(self, self.screen, topmost=True)
+        if self.media_player is not None:
+            self.media_player.play()
+
+    def dispose_for_screen_change(self) -> None:
+        self._closing_for_screen_change = True
+        self.close()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        super().closeEvent(event)
+        if not self._closing_for_screen_change:
+            application = QApplication.instance()
+            if application is not None:
+                application.quit()
 
 
 class SleepDisplayWindow(QMainWindow):
@@ -137,11 +166,12 @@ class SleepDisplayWindow(QMainWindow):
 class ScreenWindows:
     screen: QScreen
     background: VideoBackgroundWindow
-    overlay: SleepDisplayWindow
+    overlay: SleepDisplayWindow | None = None
 
     def close(self) -> None:
-        self.overlay.dispose_for_screen_change()
-        self.background.close()
+        if self.overlay is not None:
+            self.overlay.dispose_for_screen_change()
+        self.background.dispose_for_screen_change()
 
 
 class SleepDisplayManager(QObject):
@@ -154,6 +184,7 @@ class SleepDisplayManager(QObject):
         self._weather_thread: threading.Thread | None = None
         self._weather_payload_json = ""
         self._ready_windows: set[int] = set()
+        self._overlay_build_scheduled = False
 
         self.weather_timer = QTimer(self)
         self.weather_timer.setInterval(_weather_refresh_ms())
@@ -163,9 +194,10 @@ class SleepDisplayManager(QObject):
         application.screenRemoved.connect(self._screens_changed)
 
     def start(self) -> None:
+        _HEALTH_PATH.unlink(missing_ok=True)
         _write_process_state(
-            ready=True,
-            screen_count=len(self.application.screens()),
+            ready=False,
+            screen_count=0,
         )
         QTimer.singleShot(0, self.sync_screens)
         self.weather_timer.start()
@@ -182,25 +214,51 @@ class SleepDisplayManager(QObject):
                 pair.close()
 
         primary = self.application.primaryScreen()
+
+        # Cover every display with a cheap native window before constructing
+        # WebEngine views. This keeps multi-monitor sleep entry responsive.
         for screen in current_screens:
             screen_id = id(screen)
             if screen_id in self.windows:
                 continue
             background = VideoBackgroundWindow(screen)
-            overlay = SleepDisplayWindow(screen, self)
-            pair = ScreenWindows(screen, background, overlay)
+            pair = ScreenWindows(screen, background)
             self.windows[screen_id] = pair
             background.start()
-            overlay.start(activate=screen is primary)
-            # The launcher only needs one visible window to consider startup healthy.
-            # Additional monitors continue initializing in this same process.
-            _write_process_state(ready=True, screen_count=len(self.windows))
+            _write_process_state(ready=False, screen_count=len(self.windows))
+
+        _write_process_state(
+            ready=bool(self.windows),
+            screen_count=len(self.windows),
+        )
+        if any(pair.overlay is None for pair in self.windows.values()):
+            self._schedule_overlay_build()
+
+    def _schedule_overlay_build(self) -> None:
+        if self._overlay_build_scheduled:
+            return
+        self._overlay_build_scheduled = True
+        QTimer.singleShot(0, self._build_overlays)
+
+    def _build_overlays(self) -> None:
+        self._overlay_build_scheduled = False
+        primary = self.application.primaryScreen()
+        for pair in self.windows.values():
+            if pair.overlay is not None:
+                continue
+            overlay = SleepDisplayWindow(pair.screen, self)
+            pair.overlay = overlay
+            overlay.start(activate=pair.screen is primary)
             QTimer.singleShot(
                 500,
-                lambda target=overlay, active=screen is primary: target.start(activate=active),
+                lambda target=overlay, active=pair.screen is primary: target.start(activate=active),
             )
 
-        _write_process_state(ready=bool(self.windows), screen_count=len(self.windows))
+        _write_process_state(
+            ready=bool(self.windows)
+            and all(pair.overlay is not None for pair in self.windows.values()),
+            screen_count=len(self.windows),
+        )
 
     def on_window_ready(self, window: SleepDisplayWindow) -> None:
         screen_id = id(window.screen)
@@ -217,6 +275,8 @@ class SleepDisplayManager(QObject):
 
     def _fetch_weather(self) -> None:
         try:
+            from friday.search import get_weather_snapshot
+
             snapshot = asyncio.run(get_weather_snapshot(city="Da Lat", country="Vietnam"))
             payload = _weather_payload(snapshot)
         except Exception:
@@ -226,7 +286,7 @@ class SleepDisplayManager(QObject):
     def _broadcast_weather(self, payload_json: str) -> None:
         self._weather_payload_json = payload_json
         for pair in self.windows.values():
-            if id(pair.screen) in self._ready_windows:
+            if pair.overlay is not None and id(pair.screen) in self._ready_windows:
                 pair.overlay.apply_weather(payload_json)
 
     def _screens_changed(self, _screen: QScreen) -> None:
@@ -341,6 +401,15 @@ def _weather_refresh_ms() -> int:
     return int(minutes * 60_000)
 
 
+def _video_background_enabled() -> bool:
+    return os.getenv("FRIDAY_SLEEP_VIDEO_BACKGROUND_ENABLED", "false").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _write_process_state(*, ready: bool, screen_count: int = 0) -> None:
     _STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -352,7 +421,17 @@ def _write_process_state(*, ready: bool, screen_count: int = 0) -> None:
     }
     temporary = _STATE_PATH.with_name(f".{_STATE_PATH.name}.{uuid4().hex}.tmp")
     temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    temporary.replace(_STATE_PATH)
+    try:
+        for attempt in range(10):
+            try:
+                temporary.replace(_STATE_PATH)
+                return
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.01)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _read_json(path: Path) -> dict:

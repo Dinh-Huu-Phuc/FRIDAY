@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from uuid import uuid4
 
-from PySide6.QtCore import QEvent, QSettings, QThreadPool, QTimer, Qt, QUrl, Signal
+from PySide6.QtCore import QEvent, QSettings, Qt, QThreadPool, QTimer, QUrl, Signal
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QStackedWidget,
     QTextEdit,
     QVBoxLayout,
@@ -24,16 +25,32 @@ from PySide6.QtWidgets import (
 from friday.app.agent_console.greeting_engine import build_time_greeting
 from friday.app.agent_console.schemas import ConsoleChatRequest
 from friday.app.agent_console.service import get_agent_console_service
+from friday.app.neural_visual import (
+    NeuralEventStatus,
+    NeuralNodeId,
+    NeuralVisualAction,
+    emit_neural_activity,
+    emit_neural_transfer,
+    get_neural_telemetry_bus,
+    get_neural_visual_command_bus,
+    new_neural_trace_id,
+)
 from friday.app.power import get_power_state, record_power_activity
 from friday.app.research import SEARCH_ACKNOWLEDGEMENT, should_announce_search
+from friday.src.services.agent.service import build_startup_briefing, chat
+from friday.src.UI.static.code_map_ui import CodeMapWindowController
 from friday.src.UI.static.desktop_ui.controllers.tasks import FunctionTask
-from friday.src.UI.static.desktop_ui.services.audio import MicrophoneRecorder, SpeechPlayer
+from friday.src.UI.static.desktop_ui.services.audio import (
+    MicrophoneRecorder,
+    SpeechPlayer,
+)
 from friday.src.UI.static.desktop_ui.widgets.audio_waveform import AudioWaveform
 from friday.src.UI.static.desktop_ui.widgets.core_visual import CoreVisual
 from friday.src.UI.static.desktop_ui.widgets.message_bubble import MessageBubble
+from friday.src.UI.static.desktop_ui.widgets.neural_network_visual import (
+    NeuralNetworkVisual,
+)
 from friday.src.UI.static.desktop_ui.widgets.settings_panel import SettingsPanel
-from friday.src.services.agent.service import build_startup_briefing, chat
-
 
 FRIDAY_DIR = Path(__file__).resolve().parents[4]
 CORE_VIDEO = FRIDAY_DIR / "assets" / "videos" / "FRIDAY.mp4"
@@ -42,6 +59,8 @@ SESSION_ID = "python-ui"
 
 class DesktopWindow(QMainWindow):
     closing = Signal()
+    neural_visual_action_requested = Signal(str)
+    neural_telemetry_received = Signal(object)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -56,6 +75,10 @@ class DesktopWindow(QMainWindow):
         self._sleeping = False
         self._busy = False
         self._voice_active = False
+        self._active_visual = "orb"
+        self._visual_before_neural = "orb"
+        self._active_trace_id = ""
+        self._voice_trace_id = ""
 
         self._build_ui()
         self._speech = SpeechPlayer(self._thread_pool, self)
@@ -70,6 +93,27 @@ class DesktopWindow(QMainWindow):
         self._microphone.level_changed.connect(self._on_audio_level)
         self._microphone.transcript_ready.connect(self._on_transcript)
         self._microphone.error.connect(lambda message: self._set_status(message))
+        self._code_map_controller = CodeMapWindowController(self)
+        self._neural_visual_subscriber = (
+            lambda action: self.neural_visual_action_requested.emit(action.value)
+        )
+        self._unsubscribe_neural_visual = (
+            get_neural_visual_command_bus().subscribe(self._neural_visual_subscriber)
+        )
+        self.neural_visual_action_requested.connect(
+            self._apply_neural_visual_action,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        self._neural_telemetry_subscriber = (
+            lambda event: self.neural_telemetry_received.emit(event)
+        )
+        self._unsubscribe_neural_telemetry = (
+            get_neural_telemetry_bus().subscribe(self._neural_telemetry_subscriber)
+        )
+        self.neural_telemetry_received.connect(
+            self.neural_visual.ingest_event,
+            Qt.ConnectionType.QueuedConnection,
+        )
 
         self._load_snapshot()
         self._apply_visual(str(self._settings.value("appearance/visual", "orb")))
@@ -84,22 +128,45 @@ class DesktopWindow(QMainWindow):
         root.setObjectName("appRoot")
         self.setCentralWidget(root)
         shell = QVBoxLayout(root)
-        shell.setContentsMargins(18, 14, 18, 16)
-        shell.setSpacing(12)
+        shell.setContentsMargins(20, 0, 20, 18)
+        shell.setSpacing(14)
 
-        top = QHBoxLayout()
+        top_bar = QFrame()
+        top_bar.setObjectName("topBar")
+        top = QHBoxLayout(top_bar)
+        top.setContentsMargins(0, 13, 0, 13)
+        top.setSpacing(12)
+        identity = QVBoxLayout()
+        identity.setSpacing(2)
         brand = QLabel("FRIDAY  /  LOCAL CORE")
         brand.setObjectName("brand")
-        top.addWidget(brand)
+        identity.addWidget(brand)
+        brand_meta = QLabel("NATIVE INTELLIGENCE CONSOLE")
+        brand_meta.setObjectName("brandMeta")
+        identity.addWidget(brand_meta)
+        top.addLayout(identity)
         top.addStretch(1)
         self.connection = QLabel("●  online")
         self.connection.setObjectName("connection")
-        top.addWidget(self.connection)
+        self.connection.setText("LOCAL / ONLINE")
+        connection_pill = QFrame()
+        connection_pill.setObjectName("connectionPill")
+        connection_layout = QHBoxLayout(connection_pill)
+        connection_layout.setContentsMargins(10, 5, 10, 5)
+        connection_layout.setSpacing(7)
+        connection_dot = QLabel()
+        connection_dot.setObjectName("connectionDot")
+        connection_dot.setFixedSize(7, 7)
+        connection_layout.addWidget(connection_dot)
+        connection_layout.addWidget(self.connection)
+        top.addWidget(connection_pill)
         self.settings_button = QPushButton("Settings")
+        self.settings_button.setObjectName("secondaryButton")
         self.settings_button.setToolTip("Open settings")
+        self.settings_button.setFixedHeight(36)
         self.settings_button.clicked.connect(self._toggle_settings)
         top.addWidget(self.settings_button)
-        shell.addLayout(top)
+        shell.addWidget(top_bar)
 
         content = QHBoxLayout()
         content.setSpacing(14)
@@ -109,23 +176,40 @@ class DesktopWindow(QMainWindow):
         stage = QFrame()
         stage.setObjectName("coreStage")
         stage_layout = QVBoxLayout(stage)
-        stage_layout.setContentsMargins(20, 18, 20, 18)
-        stage_layout.setSpacing(6)
+        stage_layout.setContentsMargins(18, 14, 18, 14)
+        stage_layout.setSpacing(8)
+        stage_header = QHBoxLayout()
+        stage_title = QLabel("CORE VISUAL")
+        stage_title.setObjectName("sectionTitle")
+        stage_header.addWidget(stage_title)
+        stage_header.addStretch(1)
+        stage_meta = QLabel("VOICE LINK / READY")
+        stage_meta.setObjectName("sectionMeta")
+        stage_header.addWidget(stage_meta)
+        stage_layout.addLayout(stage_header)
         self.visual_stack = QStackedWidget()
+        self.visual_stack.setObjectName("visualStack")
         self.core_visual = CoreVisual()
         self.visual_stack.addWidget(self.core_visual)
+        self.neural_visual = NeuralNetworkVisual()
+        self.visual_stack.addWidget(self.neural_visual)
         self.video_widget = QVideoWidget()
         self.video_widget.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatioByExpanding)
         self.visual_stack.addWidget(self.video_widget)
         stage_layout.addWidget(self.visual_stack, 1)
-        self.kicker = QLabel("FRIDAY LOCAL CORE")
-        self.kicker.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        status_strip = QFrame()
+        status_strip.setObjectName("statusStrip")
+        status_layout = QHBoxLayout(status_strip)
+        status_layout.setContentsMargins(12, 7, 12, 7)
+        self.kicker = QLabel("FRIDAY / SYSTEM")
         self.kicker.setObjectName("kicker")
-        stage_layout.addWidget(self.kicker)
+        status_layout.addWidget(self.kicker)
+        status_layout.addStretch(1)
         self.status = QLabel("Online and ready")
-        self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.status.setObjectName("status")
-        stage_layout.addWidget(self.status)
+        status_layout.addWidget(self.status)
+        stage_layout.addWidget(status_strip)
         content.addWidget(stage, 1)
 
         self.settings_panel = SettingsPanel(self._settings)
@@ -139,23 +223,29 @@ class DesktopWindow(QMainWindow):
         command = QFrame()
         command.setObjectName("commandBar")
         command_layout = QHBoxLayout(command)
-        command_layout.setContentsMargins(8, 7, 8, 7)
+        command_layout.setContentsMargins(12, 9, 10, 9)
+        command_layout.setSpacing(10)
+        mic_block = QWidget()
+        mic_block.setObjectName("micBlock")
+        mic_layout = QVBoxLayout(mic_block)
+        mic_layout.setContentsMargins(0, 0, 0, 0)
+        mic_layout.setSpacing(0)
         self.mic_status = QLabel("MIC  STARTING")
         self.mic_status.setObjectName("micStatus")
-        self.mic_status.setMinimumWidth(112)
-        command_layout.addWidget(self.mic_status)
+        mic_layout.addWidget(self.mic_status)
         self.mic_waveform = AudioWaveform()
-        command_layout.addWidget(self.mic_waveform)
+        mic_layout.addWidget(self.mic_waveform)
+        command_layout.addWidget(mic_block)
         self.input = QTextEdit()
         self.input.setObjectName("commandInput")
         self.input.setPlaceholderText("Talk or type to FRIDAY...")
-        self.input.setFixedHeight(48)
+        self.input.setFixedHeight(50)
         self.input.installEventFilter(self)
         command_layout.addWidget(self.input, 1)
         self.send_button = QPushButton("Send")
         self.send_button.setObjectName("primaryButton")
-        self.send_button.setFixedWidth(82)
-        self.send_button.clicked.connect(self.send_message)
+        self.send_button.setFixedSize(88, 42)
+        self.send_button.clicked.connect(lambda _checked=False: self.send_message())
         command_layout.addWidget(self.send_button)
         shell.addWidget(command)
 
@@ -174,13 +264,25 @@ class DesktopWindow(QMainWindow):
     def _build_history(self) -> QFrame:
         history = QFrame()
         history.setObjectName("historyPanel")
-        history.setFixedWidth(390)
+        history.setMinimumWidth(360)
+        history.setMaximumWidth(420)
+        history.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         layout = QVBoxLayout(history)
-        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setContentsMargins(14, 14, 10, 12)
+        layout.setSpacing(10)
         header = QHBoxLayout()
-        header.addWidget(QLabel("CONVERSATION"))
+        titles = QVBoxLayout()
+        titles.setSpacing(2)
+        history_title = QLabel("CONVERSATION")
+        history_title.setObjectName("sectionTitle")
+        titles.addWidget(history_title)
+        self.history_count = QLabel("0 MESSAGES / LIVE SESSION")
+        self.history_count.setObjectName("sectionMeta")
+        titles.addWidget(self.history_count)
+        header.addLayout(titles)
         header.addStretch(1)
         clear = QPushButton("Clear")
+        clear.setObjectName("ghostButton")
         clear.setToolTip("Archive and clear conversation")
         clear.clicked.connect(self._clear_chat)
         header.addWidget(clear)
@@ -206,10 +308,26 @@ class DesktopWindow(QMainWindow):
                 return True
         return super().eventFilter(watched, event)
 
-    def send_message(self, text: str | None = None, *, channel: str = "text") -> None:
-        message = (text if text is not None else self.input.toPlainText()).strip()
+    def send_message(
+        self,
+        text: str | None = None,
+        *,
+        channel: str = "text",
+        trace_id: str = "",
+    ) -> None:
+        message_source = text if isinstance(text, str) else self.input.toPlainText()
+        message = message_source.strip()
         if not message or self._busy:
             return
+        resolved_trace_id = trace_id or new_neural_trace_id()
+        self._active_trace_id = resolved_trace_id
+        if not trace_id:
+            emit_neural_activity(
+                NeuralNodeId.TEXT_INPUT if channel == "text" else NeuralNodeId.SPEECH_RECOGNITION,
+                trace_id=resolved_trace_id,
+                event_type="input.received",
+                summary=message,
+            )
         self.input.clear()
         record_power_activity(source="desktop_ui")
         pending = list(self._snapshot.get("messages") or [])
@@ -228,7 +346,12 @@ class DesktopWindow(QMainWindow):
         else:
             self._set_status("Thinking")
 
-        request = ConsoleChatRequest(message=message, channel=channel, session_id=SESSION_ID)
+        request = ConsoleChatRequest(
+            message=message,
+            channel=channel,
+            session_id=SESSION_ID,
+            trace_id=resolved_trace_id,
+        )
         task = FunctionTask(lambda: asyncio.run(chat(request)))
         task.signals.completed.connect(self._on_chat_complete)
         task.signals.failed.connect(self._on_task_error)
@@ -241,11 +364,25 @@ class DesktopWindow(QMainWindow):
         assistant = next((item for item in reversed(messages) if item.get("role") == "assistant"), None)
         if assistant and assistant.get("id") != self._last_spoken_message_id:
             self._last_spoken_message_id = str(assistant.get("id"))
-            self._speech.enqueue(str(assistant.get("content") or ""))
+            self._speech.enqueue(
+                str(assistant.get("content") or ""),
+                trace_id=self._active_trace_id,
+            )
+        self._active_trace_id = ""
+        self._voice_trace_id = ""
         self._set_busy(False)
         self._sync_power_state()
 
     def _on_task_error(self, message: str) -> None:
+        emit_neural_activity(
+            NeuralNodeId.RESPONSE,
+            trace_id=self._active_trace_id or new_neural_trace_id(),
+            event_type="request.failed",
+            summary=message,
+            status=NeuralEventStatus.ERROR,
+        )
+        self._active_trace_id = ""
+        self._voice_trace_id = ""
         self._set_busy(False)
         self._set_status(f"Request failed: {message}")
         self._load_snapshot()
@@ -258,6 +395,7 @@ class DesktopWindow(QMainWindow):
         self._render_messages(snapshot.get("messages") or [])
 
     def _render_messages(self, messages: list[dict]) -> None:
+        self.history_count.setText(f"{len(messages)} MESSAGES / LIVE SESSION")
         while self.message_layout.count() > 1:
             item = self.message_layout.takeAt(0)
             widget = item.widget()
@@ -282,6 +420,7 @@ class DesktopWindow(QMainWindow):
     def _clear_chat(self) -> None:
         snapshot = self._console.archive_and_reset_chat(session_id=SESSION_ID, reason="desktop_clear")
         self._set_snapshot(snapshot)
+        self.neural_visual.clear_telemetry()
         self._set_status("Conversation archived and cleared")
 
     def _maybe_start_briefing(self) -> None:
@@ -316,7 +455,21 @@ class DesktopWindow(QMainWindow):
 
     def _apply_visual(self, visual: str) -> None:
         use_video = visual == "video" and CORE_VIDEO.is_file()
-        self.visual_stack.setCurrentWidget(self.video_widget if use_video else self.core_visual)
+        use_neural = visual == "neural"
+        active_visual = "video" if use_video else "neural" if use_neural else "orb"
+        if active_visual == "neural" and self._active_visual != "neural":
+            self._visual_before_neural = self._active_visual
+        elif active_visual != "neural":
+            self._visual_before_neural = active_visual
+        self._active_visual = active_visual
+        selected_widget = (
+            self.video_widget
+            if use_video
+            else self.neural_visual
+            if use_neural
+            else self.core_visual
+        )
+        self.visual_stack.setCurrentWidget(selected_widget)
         if use_video:
             if not self._video_source_loaded:
                 self._video_player.setSource(QUrl.fromLocalFile(str(CORE_VIDEO)))
@@ -326,6 +479,18 @@ class DesktopWindow(QMainWindow):
             self._video_player.pause()
             if visual == "video":
                 self._set_status("FRIDAY.mp4 was not found; Core Orb is active")
+
+    def _apply_neural_visual_action(self, value: str) -> None:
+        action = NeuralVisualAction(value)
+        if action == NeuralVisualAction.OPEN:
+            self.settings_panel.select_visual("neural")
+            self._set_status("Neural Network active")
+        elif action == NeuralVisualAction.CLOSE:
+            target = self._visual_before_neural
+            if target not in {"orb", "video"}:
+                target = "orb"
+            self.settings_panel.select_visual(target)
+            self._set_status("Neural Network closed")
 
     def _on_video_status(self, status: QMediaPlayer.MediaStatus) -> None:
         if status == QMediaPlayer.MediaStatus.InvalidMedia:
@@ -353,36 +518,62 @@ class DesktopWindow(QMainWindow):
         self.mic_status.setText("MIC  LISTENING" if listening else "MIC  PAUSED")
 
     def _on_speech_started(self) -> None:
+        self._voice_trace_id = new_neural_trace_id()
+        emit_neural_activity(
+            NeuralNodeId.MICROPHONE,
+            trace_id=self._voice_trace_id,
+            event_type="microphone.speech.started",
+            summary="Live speech detected",
+        )
         self.mic_status.setText("MIC  HEARING")
         self._set_status("Listening")
+        self._set_visual_state("listening")
 
     def _on_transcribing_changed(self, transcribing: bool) -> None:
         if transcribing:
+            trace_id = self._voice_trace_id or new_neural_trace_id()
+            self._voice_trace_id = trace_id
+            emit_neural_transfer(
+                NeuralNodeId.MICROPHONE,
+                NeuralNodeId.SPEECH_RECOGNITION,
+                trace_id=trace_id,
+                event_type="stt.transcription.started",
+                summary="Captured audio sent for speech recognition",
+            )
             self.mic_status.setText("MIC  PROCESSING")
             self._set_status("Transcribing")
+            self._set_visual_state("thinking")
 
     def _on_audio_level(self, level: float) -> None:
         self.mic_waveform.set_level(level)
 
     def _on_speaking_changed(self, active: bool) -> None:
         self._voice_active = active
-        self.core_visual.set_state(
+        self._set_visual_state(
             "speaking" if active else ("thinking" if self._busy else "online")
         )
         self._update_microphone_gate()
 
     def _on_transcript(self, text: str) -> None:
         self.input.setPlainText(text)
-        self.send_message(text, channel="voice")
+        self.send_message(
+            text,
+            channel="voice",
+            trace_id=self._voice_trace_id or new_neural_trace_id(),
+        )
 
     def _sync_power_state(self) -> None:
         sleeping = get_power_state().sleeping
         if sleeping == self._sleeping:
             return
         self._sleeping = sleeping
+        self._microphone.set_sleeping(sleeping)
         if sleeping:
+            self._set_visual_state("sleeping")
+            self._code_map_controller.close_window()
             self.hide()
         else:
+            self._set_visual_state("thinking" if self._busy else "online")
             self.showNormal()
             self.raise_()
             self.activateWindow()
@@ -390,8 +581,12 @@ class DesktopWindow(QMainWindow):
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
         self.send_button.setEnabled(not busy)
-        self.core_visual.set_state("thinking" if busy else "online")
+        self._set_visual_state("thinking" if busy else "online")
         self._update_microphone_gate()
+
+    def _set_visual_state(self, state: str) -> None:
+        self.core_visual.set_state(state)
+        self.neural_visual.set_state(state)
 
     def _update_microphone_gate(self) -> None:
         if hasattr(self, "_microphone"):
@@ -401,6 +596,9 @@ class DesktopWindow(QMainWindow):
         self.status.setText(message)
 
     def closeEvent(self, event) -> None:
+        self._unsubscribe_neural_visual()
+        self._unsubscribe_neural_telemetry()
+        self._code_map_controller.shutdown()
         if self._microphone.recording:
             self._microphone.stop()
         self._speech.set_enabled(False)

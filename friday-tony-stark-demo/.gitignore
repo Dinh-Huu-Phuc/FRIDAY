@@ -219,4 +219,4 @@ friday/log/**
 !friday/log/**/
 !friday/log/*.py
 !friday/log/**/*.py
-
+!.friday-tony-stark-demo/md/

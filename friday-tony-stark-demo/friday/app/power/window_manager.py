@@ -335,9 +335,9 @@ def _snapshot_path() -> Path:
 
 def _transition_delay_seconds() -> float:
     try:
-        milliseconds = float(os.getenv("FRIDAY_WINDOW_TRANSITION_DELAY_MS", "140"))
+        milliseconds = float(os.getenv("FRIDAY_WINDOW_TRANSITION_DELAY_MS", "0"))
     except ValueError:
-        milliseconds = 140.0
+        milliseconds = 0.0
     return min(max(milliseconds, 0.0), 2_000.0) / 1_000.0
 
 

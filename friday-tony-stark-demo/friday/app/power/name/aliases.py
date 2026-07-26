@@ -79,8 +79,6 @@ PHRASE_SPECS: tuple[PhraseSpec, ...] = (
     PhraseSpec("friday resume", PowerIntent.WAKE, "wake_resume", "wake_resume"),
     PhraseSpec("friday come back", PowerIntent.WAKE, "wake_return", "wake_resume"),
     PhraseSpec("friday i need you", PowerIntent.WAKE, "wake_needed", "wake_summon"),
-    PhraseSpec("hey friday", PowerIntent.WAKE, "wake_hey", "wake_summon"),
-    PhraseSpec("friday", PowerIntent.WAKE, "wake_name", "wake_summon"),
     PhraseSpec(
         "friday are you there",
         PowerIntent.WAKE,

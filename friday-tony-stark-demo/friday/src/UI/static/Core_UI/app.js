@@ -44,6 +44,8 @@ const state = {
   microphoneSilenceAt: 0,
   microphoneNoiseFloor: 0.003,
   microphoneVoiceFrames: 0,
+  microphoneCaptureStartedAt: 0,
+  microphoneCapturePeak: 0,
   microphoneChunks: [],
   microphonePreRoll: [],
   microphoneLevels: Array(30).fill(0),
@@ -608,20 +610,31 @@ const SpeechInputController = {
       state.microphoneChunks = []
       state.microphoneSilenceAt = 0
       state.microphoneVoiceFrames = 0
+      state.microphoneCaptureStartedAt = 0
+      state.microphoneCapturePeak = 0
       return
     }
 
-    const threshold = Math.max(0.006, state.microphoneNoiseFloor * 3.2)
+    const sleeping = state.powerState === "sleeping"
+    const threshold = sleeping
+      ? Math.max(0.014, state.microphoneNoiseFloor * 5)
+      : Math.max(0.006, state.microphoneNoiseFloor * 3.2)
+    const requiredVoiceFrames = sleeping ? 6 : 3
     if (rms >= threshold) {
       state.microphoneVoiceFrames += 1
-      if (!state.microphoneCapturing && state.microphoneVoiceFrames >= 3) {
+      if (!state.microphoneCapturing && state.microphoneVoiceFrames >= requiredVoiceFrames) {
         state.microphoneCapturing = true
+        state.microphoneCaptureStartedAt = performance.now()
+        state.microphoneCapturePeak = rms
         state.microphoneChunks = [...state.microphonePreRoll]
         state.microphonePreRoll = []
         voiceStatus.textContent = "hearing speech"
         if (state.powerState !== "sleeping") setCoreState("listening", "FRIDAY is listening")
       }
-      if (state.microphoneCapturing) state.microphoneSilenceAt = 0
+      if (state.microphoneCapturing) {
+        state.microphoneCapturePeak = Math.max(state.microphoneCapturePeak, rms)
+        state.microphoneSilenceAt = 0
+      }
       return
     }
 
@@ -643,6 +656,12 @@ const SpeechInputController = {
     state.microphoneCapturing = false
     state.microphoneSilenceAt = 0
     state.microphoneVoiceFrames = 0
+    const captureDuration = state.microphoneCaptureStartedAt
+      ? performance.now() - state.microphoneCaptureStartedAt
+      : 0
+    const capturePeak = state.microphoneCapturePeak
+    state.microphoneCaptureStartedAt = 0
+    state.microphoneCapturePeak = 0
     const chunks = state.microphoneChunks
     state.microphoneChunks = []
     state.microphonePreRoll = []
@@ -654,6 +673,10 @@ const SpeechInputController = {
       : chunks
     const audio = new Blob(completeChunks, { type: contentType })
     if (audio.size < 2_000) return
+    if (state.powerState === "sleeping" && (captureDuration < 500 || capturePeak < 0.014)) {
+      voiceStatus.textContent = "always listening"
+      return
+    }
     state.microphoneTranscribing = true
     voiceStatus.textContent = "transcribing"
     micButton.dataset.active = "processing"
@@ -687,6 +710,8 @@ const SpeechInputController = {
     state.microphoneCapturing = false
     state.microphoneChunks = []
     state.microphoneVoiceFrames = 0
+    state.microphoneCaptureStartedAt = 0
+    state.microphoneCapturePeak = 0
   },
   resumeAfterSpeech() {
     state.recognitionPausedForSpeech = false

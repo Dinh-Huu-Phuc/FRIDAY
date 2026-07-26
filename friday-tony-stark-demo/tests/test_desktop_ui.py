@@ -13,15 +13,24 @@ from PySide6.QtCore import QEventLoop, QThreadPool, QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication, QTextBrowser
 
+from friday.app.neural_visual import (
+    NeuralEventStatus,
+    NeuralNodeId,
+    NeuralTelemetryEvent,
+)
 from friday.src.UI.routes import mount_web_ui_static
 from friday.src.UI.static.desktop_ui.services.audio import (
-    VoiceActivitySegmenter,
     SpeechPlayer,
+    VoiceActivitySegmenter,
     pcm16_rms,
     pcm_to_wav,
 )
 from friday.src.UI.static.desktop_ui.widgets.core_visual import CoreVisual
 from friday.src.UI.static.desktop_ui.widgets.message_bubble import MessageBubble
+from friday.src.UI.static.desktop_ui.widgets.neural_network_visual import (
+    NeuralNetworkVisual,
+)
+from friday.src.UI.static.desktop_ui.window import DesktopWindow
 
 
 def _app() -> QApplication:
@@ -98,8 +107,22 @@ def test_speech_player_watchdog_releases_the_microphone_gate() -> None:
 
     assert states[0] is True
     assert states[-1] is False
-    assert player._audio_path == ""
+    assert player._audio_sink is None
+    assert player._audio_buffer is None
     pool.waitForDone(1_000)
+
+
+def test_speech_player_decodes_the_entire_wav_payload() -> None:
+    _app()
+    pcm = b"\x01\x00" * 32_000
+    payload = pcm_to_wav(pcm, sample_rate=16_000)
+
+    decoded, audio_format, duration_ms = SpeechPlayer._decode_wav(payload)
+
+    assert decoded == pcm
+    assert audio_format.sampleRate() == 16_000
+    assert audio_format.channelCount() == 1
+    assert duration_ms == 2_000
 
 
 def test_native_message_can_render_markdown_and_copy() -> None:
@@ -130,6 +153,55 @@ def test_core_visual_renders_offscreen() -> None:
     assert image.height() == 420
 
 
+def test_neural_network_visual_renders_nodes_edges_and_motion() -> None:
+    _app()
+    visual = NeuralNetworkVisual()
+    visual.resize(640, 420)
+    visual.set_state("thinking")
+    first = visual.grab().toImage()
+    assert visual.active_pulse_count == 0
+    visual.ingest_event(
+        NeuralTelemetryEvent(
+            trace_id="desktop-render-test",
+            source_node=NeuralNodeId.TEXT_INPUT,
+            target_node=NeuralNodeId.INTENT_ROUTER,
+            event_type="intent.routing.started",
+            summary="Open the neural network",
+            status=NeuralEventStatus.ACTIVE,
+        )
+    )
+    for _ in range(12):
+        visual._advance()
+    second = visual.grab().toImage()
+
+    assert len(visual._nodes) >= 12
+    assert len(visual._edges) >= 20
+    assert visual.active_pulse_count == 1
+    intent_point = visual._node_points()[NeuralNodeId.INTENT_ROUTER]
+    assert visual._node_at(intent_point) == NeuralNodeId.INTENT_ROUTER
+    assert visual.state == "thinking"
+    assert not first.isNull()
+    assert not second.isNull()
+    assert first != second
+
+
+def test_send_message_ignores_qt_clicked_boolean_metadata() -> None:
+    class InputStub:
+        def __init__(self) -> None:
+            self.read_count = 0
+
+        def toPlainText(self) -> str:
+            self.read_count += 1
+            return "FRIDAY open code map"
+
+    input_stub = InputStub()
+    window_stub = type("WindowStub", (), {"input": input_stub, "_busy": True})()
+
+    DesktopWindow.send_message(window_stub, False)
+
+    assert input_stub.read_count == 1
+
+
 def test_native_python_sources_are_not_exposed_as_static_files() -> None:
     app = FastAPI()
     mount_web_ui_static(app)
@@ -137,3 +209,4 @@ def test_native_python_sources_are_not_exposed_as_static_files() -> None:
 
     assert client.get("/ui/static/Core_UI/styles.css").status_code == 200
     assert client.get("/ui/static/desktop_ui/window.py").status_code == 404
+    assert client.get("/ui/static/code_map_ui/window.py").status_code == 404

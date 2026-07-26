@@ -48,10 +48,35 @@ class PowerStateTests(unittest.TestCase):
             "goodbye",
             "are you there",
             "could you wake up Friday",
+            "Friday",
+            "Hey Friday",
         )
         for phrase in unlisted:
             with self.subTest(phrase=phrase):
                 self.assertEqual(detect_power_intent(phrase), PowerIntent.NONE)
+
+    def test_transient_state_read_failure_preserves_the_last_sleeping_state(self) -> None:
+        from friday.app.power import service
+
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = str(Path(directory) / "power-state.json")
+            with patch.dict(
+                os.environ,
+                {
+                    "FRIDAY_POWER_STATE_PATH": state_path,
+                    "FRIDAY_INITIAL_STATE": "sleeping",
+                },
+                clear=False,
+            ):
+                expected = initialize_power_state(source="test")
+                with (
+                    patch.object(Path, "read_text", side_effect=PermissionError("busy")),
+                    patch.object(service.time, "sleep") as sleep,
+                ):
+                    actual = service.get_power_state()
+
+        self.assertEqual(actual, expected)
+        self.assertEqual(sleep.call_count, 4)
 
     def test_responses_rotate_within_the_selected_group(self) -> None:
         first = select_power_response("wake_presence")

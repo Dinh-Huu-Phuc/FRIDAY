@@ -4,24 +4,38 @@ import asyncio
 import io
 import math
 import os
-import tempfile
 import wave
 from array import array
 from collections import deque
 from dataclasses import dataclass, field
 
-from PySide6.QtCore import QObject, QThreadPool, QTimer, QUrl, Signal
+from PySide6.QtCore import (
+    QBuffer,
+    QByteArray,
+    QIODevice,
+    QObject,
+    QThreadPool,
+    QTimer,
+    Signal,
+)
 from PySide6.QtMultimedia import (
+    QAudio,
     QAudioFormat,
-    QAudioOutput,
+    QAudioSink,
     QAudioSource,
     QMediaDevices,
-    QMediaPlayer,
 )
 
 from friday.app.agent_console.tts_service import synthesize_console_speech
-from friday.src.UI.static.desktop_ui.controllers.tasks import FunctionTask
+from friday.app.neural_visual import (
+    NeuralEventStatus,
+    NeuralNodeId,
+    emit_neural_activity,
+    emit_neural_transfer,
+    new_neural_trace_id,
+)
 from friday.src.services.agent.stt_service import transcribe_core_audio
+from friday.src.UI.static.desktop_ui.controllers.tasks import FunctionTask
 
 
 def pcm_to_wav(pcm: bytes, *, sample_rate: int, channels: int = 1) -> bytes:
@@ -41,40 +55,46 @@ class SpeechPlayer(QObject):
     def __init__(self, thread_pool: QThreadPool, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._thread_pool = thread_pool
-        self._queue: deque[str] = deque()
+        self._queue: deque[tuple[str, str]] = deque()
         self._loading = False
         self._enabled = True
-        self._audio_output = QAudioOutput(self)
-        self._audio_output.setVolume(1.0)
-        self._player = QMediaPlayer(self)
-        self._player.setAudioOutput(self._audio_output)
-        self._player.mediaStatusChanged.connect(self._on_media_status)
-        self._player.errorOccurred.connect(lambda _error, message: self._fail(message))
+        self._audio_sink: QAudioSink | None = None
+        self._audio_buffer: QBuffer | None = None
         self._audio_path = ""
         self._playback_token = 0
         self._finishing = False
+        self._active_trace_id = ""
 
     def set_enabled(self, enabled: bool) -> None:
         self._enabled = enabled
         if not enabled:
             self._queue.clear()
             self._clear_playback()
+            self._active_trace_id = ""
             self.speaking_changed.emit(False)
 
-    def enqueue(self, text: str) -> None:
+    def enqueue(self, text: str, *, trace_id: str = "") -> None:
         normalized = text.strip()
         if not self._enabled or not normalized:
             return
-        self._queue.append(normalized)
+        self._queue.append((normalized, trace_id))
         self._start_next()
 
     def _start_next(self) -> None:
-        if self._loading or self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+        if self._loading or self._audio_sink is not None:
             return
         if not self._queue:
             self.speaking_changed.emit(False)
             return
-        text = self._queue.popleft()
+        text, trace_id = self._queue.popleft()
+        self._active_trace_id = trace_id or new_neural_trace_id()
+        emit_neural_transfer(
+            NeuralNodeId.RESPONSE,
+            NeuralNodeId.TTS,
+            trace_id=self._active_trace_id,
+            event_type="tts.synthesis.started",
+            summary=text,
+        )
         self._loading = True
         self.speaking_changed.emit(True)
         task = FunctionTask(lambda: asyncio.run(synthesize_console_speech(text)))
@@ -87,33 +107,71 @@ class SpeechPlayer(QObject):
         if not self._enabled:
             self.speaking_changed.emit(False)
             return
-        payload = bytes(audio)
+        try:
+            pcm, audio_format, duration_ms = self._decode_wav(bytes(audio))
+            output_device = QMediaDevices.defaultAudioOutput()
+            if output_device.isNull():
+                raise RuntimeError("No audio output device is available.")
+            if not output_device.isFormatSupported(audio_format):
+                raise RuntimeError(
+                    "The audio output does not support FRIDAY's voice format."
+                )
+        except (TypeError, ValueError, RuntimeError, wave.Error) as exc:
+            self._fail(str(exc) or "Voice playback failed.")
+            return
+
+        if self._active_trace_id:
+            emit_neural_activity(
+                NeuralNodeId.TTS,
+                trace_id=self._active_trace_id,
+                event_type="tts.playback.started",
+                summary=f"Playing {duration_ms} ms of synthesized speech",
+                status=NeuralEventStatus.SUCCESS,
+                duration_ms=float(duration_ms),
+            )
+
         self._clear_playback()
-        with tempfile.NamedTemporaryFile(
-            mode="wb",
-            prefix="friday_tts_",
-            suffix=".wav",
-            delete=False,
-        ) as audio_file:
-            audio_file.write(payload)
-            self._audio_path = audio_file.name
-        duration_ms = self._wav_duration_ms(payload)
+        self._audio_buffer = QBuffer(self)
+        self._audio_buffer.setData(QByteArray(pcm))
+        self._audio_buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+        self._audio_sink = QAudioSink(output_device, audio_format, self)
+        self._audio_sink.setVolume(1.0)
         self._playback_token += 1
         token = self._playback_token
-        self._player.setSource(QUrl.fromLocalFile(self._audio_path))
-        self._player.play()
+        self._audio_sink.stateChanged.connect(
+            lambda state, active_token=token: self._on_audio_state(active_token, state)
+        )
+        self._audio_sink.start(self._audio_buffer)
         QTimer.singleShot(
-            max(1_500, duration_ms + 1_500),
+            max(500, duration_ms + 500),
             lambda: self._finish_playback(token),
         )
 
-    def _on_media_status(self, status: QMediaPlayer.MediaStatus) -> None:
-        if status == QMediaPlayer.MediaStatus.EndOfMedia:
-            self._finish_playback(self._playback_token)
+    def _on_audio_state(self, token: int, state: QAudio.State) -> None:
+        if token != self._playback_token:
+            return
+        if state == QAudio.State.IdleState:
+            self._finish_playback(token)
+            return
+        if (
+            state == QAudio.State.StoppedState
+            and self._audio_sink is not None
+            and self._audio_sink.error() != QAudio.Error.NoError
+        ):
+            self._fail(f"Audio output stopped: {self._audio_sink.error().name}")
 
     def _fail(self, message: str) -> None:
         self._loading = False
+        if self._active_trace_id:
+            emit_neural_activity(
+                NeuralNodeId.TTS,
+                trace_id=self._active_trace_id,
+                event_type="tts.failed",
+                summary=message,
+                status=NeuralEventStatus.ERROR,
+            )
         self._clear_playback()
+        self._active_trace_id = ""
         self.error.emit(message or "Voice playback failed.")
         self._start_next()
 
@@ -125,27 +183,49 @@ class SpeechPlayer(QObject):
             self._clear_playback()
         finally:
             self._finishing = False
+        if self._active_trace_id:
+            emit_neural_activity(
+                NeuralNodeId.TTS,
+                trace_id=self._active_trace_id,
+                event_type="tts.playback.completed",
+                summary="Spoken response completed",
+                status=NeuralEventStatus.SUCCESS,
+            )
+        self._active_trace_id = ""
         self._start_next()
 
     def _clear_playback(self) -> None:
         self._playback_token += 1
-        self._player.stop()
-        self._player.setSource(QUrl())
-        path = self._audio_path
+        sink = self._audio_sink
+        self._audio_sink = None
+        if sink is not None:
+            sink.stop()
+            sink.deleteLater()
+        buffer = self._audio_buffer
+        self._audio_buffer = None
+        if buffer is not None:
+            buffer.close()
+            buffer.deleteLater()
         self._audio_path = ""
-        if path:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
 
     @staticmethod
-    def _wav_duration_ms(payload: bytes) -> int:
-        try:
-            with wave.open(io.BytesIO(payload), "rb") as wav_file:
-                return round(wav_file.getnframes() * 1000 / wav_file.getframerate())
-        except (wave.Error, ZeroDivisionError):
-            return 10_000
+    def _decode_wav(payload: bytes) -> tuple[bytes, QAudioFormat, int]:
+        with wave.open(io.BytesIO(payload), "rb") as wav_file:
+            if wav_file.getcomptype() != "NONE" or wav_file.getsampwidth() != 2:
+                raise ValueError("FRIDAY voice audio must be 16-bit PCM WAV.")
+            sample_rate = wav_file.getframerate()
+            channels = wav_file.getnchannels()
+            frame_count = wav_file.getnframes()
+            if sample_rate <= 0 or channels <= 0:
+                raise ValueError("FRIDAY voice audio has an invalid format.")
+            pcm = wav_file.readframes(frame_count)
+
+        audio_format = QAudioFormat()
+        audio_format.setSampleRate(sample_rate)
+        audio_format.setChannelCount(channels)
+        audio_format.setSampleFormat(QAudioFormat.SampleFormat.Int16)
+        duration_ms = round(frame_count * 1000 / sample_rate)
+        return pcm, audio_format, duration_ms
 
 
 def pcm16_rms(pcm: bytes) -> int:
@@ -259,6 +339,11 @@ class MicrophoneRecorder(QObject):
         self._channels = 1
         self._paused = False
         self._transcribing = False
+        self._sleeping = False
+        self._normal_threshold = 250
+        self._sleep_threshold = 500
+        self._normal_min_voice_ms = 240.0
+        self._sleep_min_voice_ms = 500.0
         self._segmenter: VoiceActivitySegmenter | None = None
 
     @property
@@ -279,11 +364,24 @@ class MicrophoneRecorder(QObject):
             return
         self._sample_rate = audio_format.sampleRate()
         self._channels = audio_format.channelCount()
+        self._normal_threshold = int(os.getenv("FRIDAY_DESKTOP_MIC_RMS_THRESHOLD", "250"))
+        self._sleep_threshold = max(
+            self._normal_threshold,
+            int(os.getenv("FRIDAY_DESKTOP_SLEEP_MIC_RMS_THRESHOLD", "500")),
+        )
+        self._normal_min_voice_ms = float(
+            os.getenv("FRIDAY_DESKTOP_MIC_MIN_VOICE_MS", "240")
+        )
+        self._sleep_min_voice_ms = max(
+            self._normal_min_voice_ms,
+            float(os.getenv("FRIDAY_DESKTOP_SLEEP_MIC_MIN_VOICE_MS", "500")),
+        )
         self._segmenter = VoiceActivitySegmenter(
             sample_rate=self._sample_rate,
             channels=self._channels,
-            threshold=int(os.getenv("FRIDAY_DESKTOP_MIC_RMS_THRESHOLD", "250")),
+            threshold=self._effective_threshold(),
             silence_ms=float(os.getenv("FRIDAY_DESKTOP_MIC_SILENCE_MS", "850")),
+            min_voice_ms=self._effective_min_voice_ms(),
             max_utterance_ms=float(
                 os.getenv("FRIDAY_DESKTOP_MIC_MAX_UTTERANCE_MS", "15000")
             ),
@@ -316,6 +414,21 @@ class MicrophoneRecorder(QObject):
         if paused:
             self.level_changed.emit(0.0)
         self._emit_listening_state()
+
+    def set_sleeping(self, sleeping: bool) -> None:
+        if self._sleeping == sleeping:
+            return
+        self._sleeping = sleeping
+        if self._segmenter is not None:
+            self._segmenter.threshold = self._effective_threshold()
+            self._segmenter.min_voice_ms = self._effective_min_voice_ms()
+            self._segmenter.reset()
+
+    def _effective_threshold(self) -> int:
+        return self._sleep_threshold if self._sleeping else self._normal_threshold
+
+    def _effective_min_voice_ms(self) -> float:
+        return self._sleep_min_voice_ms if self._sleeping else self._normal_min_voice_ms
 
     def _submit_utterance(self, pcm: bytes) -> None:
         self._transcribing = True

@@ -17,15 +17,15 @@ def minimize_application_windows() -> WindowActionResult:
         if not window_sleep_enabled():
             return WindowActionResult(False, "minimize", 0, 0, "Window sleep is disabled.")
 
+        display = start_sleep_display()
         result = WindowSleepManager().minimize_all()
-        if result.ok:
-            brightness = dim_displays()
-            display = start_sleep_display()
-            logger.info(
-                "Sleep environment brightness=%s display=%s",
-                brightness.message,
-                display.message,
-            )
+        brightness = dim_displays()
+        logger.info(
+            "Sleep environment display=%s windows=%s brightness=%s",
+            display.message,
+            result.message,
+            brightness.message,
+        )
         return result
 
 
