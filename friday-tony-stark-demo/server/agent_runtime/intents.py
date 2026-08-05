@@ -9,6 +9,10 @@ WINDOWS_APP_CLEANUP_PATTERN = re.compile(
     r"\b(friday|firday|please|could\s+you|would\s+you|for\s+me|app|application)\b",
     re.IGNORECASE,
 )
+BROWSER_TARGET_PATTERN = re.compile(
+    r"\b(browser|binance|youtube|tik\s*tok|website|webpage|url|new\s+tab)\b",
+    re.IGNORECASE,
+)
 DAILY_BRIEFING_PATTERN = re.compile(
     r"\b(briefing|daily\s+brief|quick\s+report|start\s+my\s+day|today'?s\s+summary|what'?s\s+new|unfinished\s+work)\b",
     re.IGNORECASE,
@@ -33,7 +37,11 @@ def is_gmail_check_request(text: str) -> bool:
 
 def extract_windows_app_query(text: str) -> str:
     candidate = str(text or "").strip()
-    if not candidate or not WINDOWS_APP_OPEN_INTENT_PATTERN.search(candidate):
+    if (
+        not candidate
+        or not WINDOWS_APP_OPEN_INTENT_PATTERN.search(candidate)
+        or BROWSER_TARGET_PATTERN.search(candidate)
+    ):
         return ""
     without_verb = WINDOWS_APP_OPEN_INTENT_PATTERN.sub(" ", candidate, count=1)
     cleaned = WINDOWS_APP_CLEANUP_PATTERN.sub(" ", without_verb)

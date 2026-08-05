@@ -14,6 +14,7 @@ class NeuralNodeId:
     BROWSER = "automation.browser"
     INTEGRATIONS = "integrations.messaging"
     POWER = "system.power"
+    CALENDAR = "planning.calendar"
     LOCAL_TOOLS = "tools.local"
     LLM = "reasoning.llm"
     RESPONSE = "response.composer"
@@ -86,6 +87,14 @@ NEURAL_NODES = (
         "SYSTEM",
         0.49,
         0.10,
+    ),
+    NeuralNodeDefinition(
+        NeuralNodeId.CALENDAR,
+        "CALENDAR",
+        "Loads local routines and emits scheduled reminders.",
+        "SYSTEM",
+        0.67,
+        0.14,
     ),
     NeuralNodeDefinition(
         NeuralNodeId.BROWSER,
@@ -188,6 +197,8 @@ NEURAL_EDGES = (
     _edge(NeuralNodeId.INTENT_ROUTER, NeuralNodeId.INTEGRATIONS, 0.05),
     _edge(NeuralNodeId.INTENT_ROUTER, NeuralNodeId.LOCAL_TOOLS, 0.08),
     _edge(NeuralNodeId.INTENT_ROUTER, NeuralNodeId.MEMORY, 0.08),
+    _edge(NeuralNodeId.LOCAL_TOOLS, NeuralNodeId.CALENDAR, -0.10),
+    _edge(NeuralNodeId.CALENDAR, NeuralNodeId.RESPONSE, -0.08),
     _edge(NeuralNodeId.MEMORY, NeuralNodeId.LIVE_SEARCH, -0.10),
     _edge(NeuralNodeId.MEMORY, NeuralNodeId.LLM, 0.04),
     _edge(NeuralNodeId.LIVE_SEARCH, NeuralNodeId.LLM, -0.04),

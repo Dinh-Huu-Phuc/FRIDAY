@@ -25,6 +25,10 @@ from PySide6.QtWidgets import (
 from friday.app.agent_console.greeting_engine import build_time_greeting
 from friday.app.agent_console.schemas import ConsoleChatRequest
 from friday.app.agent_console.service import get_agent_console_service
+from friday.app.calendar import (
+    CalendarReminderEvent,
+    get_calendar_reminder_bus,
+)
 from friday.app.neural_visual import (
     NeuralEventStatus,
     NeuralNodeId,
@@ -38,6 +42,7 @@ from friday.app.neural_visual import (
 from friday.app.power import get_power_state, record_power_activity
 from friday.app.research import SEARCH_ACKNOWLEDGEMENT, should_announce_search
 from friday.src.services.agent.service import build_startup_briefing, chat
+from friday.src.UI.static.browser_ui import SecureBrowserWindowController
 from friday.src.UI.static.code_map_ui import CodeMapWindowController
 from friday.src.UI.static.desktop_ui.controllers.tasks import FunctionTask
 from friday.src.UI.static.desktop_ui.services.audio import (
@@ -59,6 +64,7 @@ SESSION_ID = "python-ui"
 
 class DesktopWindow(QMainWindow):
     closing = Signal()
+    calendar_reminder_received = Signal(object)
     neural_visual_action_requested = Signal(str)
     neural_telemetry_received = Signal(object)
 
@@ -85,6 +91,18 @@ class DesktopWindow(QMainWindow):
         self._speech.set_enabled(self.settings_panel.voice_reply.isChecked())
         self._speech.error.connect(lambda message: self._set_status(f"Voice unavailable: {message}"))
         self._speech.speaking_changed.connect(self._on_speaking_changed)
+        self._calendar_reminder_subscriber = (
+            lambda event: self.calendar_reminder_received.emit(event)
+        )
+        self._unsubscribe_calendar_reminders = (
+            get_calendar_reminder_bus().subscribe(
+                self._calendar_reminder_subscriber
+            )
+        )
+        self.calendar_reminder_received.connect(
+            self._on_calendar_reminder,
+            Qt.ConnectionType.QueuedConnection,
+        )
         self._microphone = MicrophoneRecorder(self._thread_pool, self)
         self._microphone.recording_changed.connect(self._on_recording_changed)
         self._microphone.listening_changed.connect(self._on_listening_changed)
@@ -93,6 +111,7 @@ class DesktopWindow(QMainWindow):
         self._microphone.level_changed.connect(self._on_audio_level)
         self._microphone.transcript_ready.connect(self._on_transcript)
         self._microphone.error.connect(lambda message: self._set_status(message))
+        self._secure_browser_controller = SecureBrowserWindowController(self)
         self._code_map_controller = CodeMapWindowController(self)
         self._neural_visual_subscriber = (
             lambda action: self.neural_visual_action_requested.emit(action.value)
@@ -550,9 +569,27 @@ class DesktopWindow(QMainWindow):
     def _on_speaking_changed(self, active: bool) -> None:
         self._voice_active = active
         self._set_visual_state(
-            "speaking" if active else ("thinking" if self._busy else "online")
+            "speaking"
+            if active
+            else (
+                "sleeping"
+                if self._sleeping
+                else ("thinking" if self._busy else "online")
+            )
         )
         self._update_microphone_gate()
+
+    def _on_calendar_reminder(self, event: object) -> None:
+        if not isinstance(event, CalendarReminderEvent):
+            return
+        if event.message is not None and not event.sleeping:
+            self._load_snapshot()
+            self._set_status(f"Reminder: {event.title}")
+        if event.audio_target in {"desktop", "all"}:
+            self._speech.enqueue(
+                event.spoken_text,
+                trace_id=event.trace_id,
+            )
 
     def _on_transcript(self, text: str) -> None:
         self.input.setPlainText(text)
@@ -570,6 +607,7 @@ class DesktopWindow(QMainWindow):
         self._microphone.set_sleeping(sleeping)
         if sleeping:
             self._set_visual_state("sleeping")
+            self._secure_browser_controller.close_all_windows()
             self._code_map_controller.close_window()
             self.hide()
         else:
@@ -596,8 +634,10 @@ class DesktopWindow(QMainWindow):
         self.status.setText(message)
 
     def closeEvent(self, event) -> None:
+        self._unsubscribe_calendar_reminders()
         self._unsubscribe_neural_visual()
         self._unsubscribe_neural_telemetry()
+        self._secure_browser_controller.shutdown()
         self._code_map_controller.shutdown()
         if self._microphone.recording:
             self._microphone.stop()

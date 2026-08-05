@@ -16,12 +16,17 @@ from friday.app.neural_visual.topology import (
 def test_neural_topology_uses_stable_semantic_ids() -> None:
     assert NeuralNodeId.INTENT_ROUTER in NEURAL_NODE_MAP
     assert NeuralNodeId.LLM in NEURAL_NODE_MAP
+    assert NeuralNodeId.CALENDAR in NEURAL_NODE_MAP
     assert (
         f"{NeuralNodeId.SPEECH_RECOGNITION}->{NeuralNodeId.INTENT_ROUTER}"
         in NEURAL_EDGE_MAP
     )
     assert (
         f"{NeuralNodeId.RESPONSE}->{NeuralNodeId.TTS}"
+        in NEURAL_EDGE_MAP
+    )
+    assert (
+        f"{NeuralNodeId.CALENDAR}->{NeuralNodeId.RESPONSE}"
         in NEURAL_EDGE_MAP
     )
 

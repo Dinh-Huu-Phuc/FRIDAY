@@ -7,7 +7,8 @@ from friday.app.browser_automation.schemas import (
     BrowserSearchCommand,
     PlatformVideoSearchCommand,
 )
-
+from friday.app.secure_browser.intents import match_secure_browser_intent
+from friday.app.secure_browser.schemas import SecureBrowserAction
 
 _BINANCE_ASSETS = {
     "bitcoin": ("BTC", "Bitcoin"),
@@ -72,6 +73,12 @@ def parse_browser_search_command(message: str) -> BrowserSearchCommand | None:
     if not match:
         match = _NATURAL_BROWSER_SEARCH_PATTERN.fullmatch(candidate)
     if not match:
+        browser_intent = match_secure_browser_intent(candidate)
+        if (
+            browser_intent.action == SecureBrowserAction.OPEN
+            and browser_intent.query
+        ):
+            return BrowserSearchCommand(query=browser_intent.query)
         return None
 
     query = _TRAILING_ACTION_PATTERN.sub("", match.group("query"))

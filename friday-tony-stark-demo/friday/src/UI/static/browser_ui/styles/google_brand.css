@@ -1,0 +1,27 @@
+#friday-search-brand {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  min-width: 92px;
+  height: 34px;
+  color: #67f7f0 !important;
+  font-family: "Segoe UI", Arial, sans-serif !important;
+  font-size: 24px !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+  letter-spacing: 0 !important;
+  text-shadow: 0 0 10px rgba(103, 247, 240, 0.35);
+  white-space: nowrap;
+}
+
+.friday-google-brand-host {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-width: 92px !important;
+  text-decoration: none !important;
+}
+
+.friday-google-brand-host > .friday-original-google-brand {
+  display: none !important;
+}

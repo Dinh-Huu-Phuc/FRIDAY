@@ -5,7 +5,10 @@ import unittest
 from unittest.mock import Mock, patch
 
 from friday.app.browser_automation.binance import get_binance_urls
-from friday.app.browser_automation.controller import BrowserControlError, ChromeController
+from friday.app.browser_automation.controller import (
+    BrowserControlError,
+    ChromeController,
+)
 from friday.app.browser_automation.intents import (
     is_binance_market_request,
     is_browser_search_request,
@@ -14,12 +17,20 @@ from friday.app.browser_automation.intents import (
     parse_browser_search_command,
     parse_platform_video_search_command,
 )
-from friday.app.browser_automation.reader import BingResearchProvider, extract_article_excerpt, is_safe_public_url
+from friday.app.browser_automation.reader import (
+    BingResearchProvider,
+    extract_article_excerpt,
+    is_safe_public_url,
+)
 from friday.app.browser_automation.schemas import WebSearchResult
 from friday.app.browser_automation.service import (
     run_binance_market,
     run_browser_search,
     run_platform_video_search,
+)
+from friday.app.secure_browser import (
+    SecureBrowserAction,
+    get_secure_browser_command_bus,
 )
 
 
@@ -133,6 +144,7 @@ class BrowserIntentTests(unittest.TestCase):
         self.assertFalse(is_browser_search_request("search for Iron Man"))
         self.assertFalse(is_browser_search_request("Show me what I am looking at on this screen"))
         self.assertFalse(is_browser_search_request("Show me my current screen"))
+        self.assertTrue(is_browser_search_request("FRIDAY, search Tony Stark."))
 
     def test_parses_youtube_and_tiktok_video_search_commands(self) -> None:
         samples = {
@@ -209,6 +221,24 @@ class ChromeControllerTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.query, "BTC")
         controller.open_binance_market.assert_called_once()
+
+    def test_binance_uses_friday_browser_by_default(self) -> None:
+        requests = []
+        unsubscribe = get_secure_browser_command_bus().subscribe(requests.append)
+        try:
+            result = run_binance_market("FRIDAY, open Binance Bitcoin market")
+        finally:
+            unsubscribe()
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.query, "BTC")
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(
+            requests[0].url,
+            "https://www.binance.com/vi/trade/BTC_USDT?_from=markets",
+        )
+        self.assertEqual(requests[0].query, "Binance BTC/USDT")
+        self.assertIn("FRIDAY Browser", result.message)
 
     def test_search_and_open_are_visible_keyboard_sequences(self) -> None:
         backend = FakeChromeBackend()
@@ -291,8 +321,51 @@ class ChromeControllerTests(unittest.TestCase):
         self.assertIn("main a[href*='/video/']", typed[-1][1])
         self.assertIn("slice(0,3)", typed[-1][1])
 
+    def test_youtube_search_uses_friday_browser_by_default(self) -> None:
+        requests = []
+        unsubscribe = get_secure_browser_command_bus().subscribe(requests.append)
+        try:
+            result = run_platform_video_search(
+                "FRIDAY, open YouTube and search Iron Man.",
+                result_index=1,
+            )
+        finally:
+            unsubscribe()
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.selected_rank, 2)
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(
+            requests[0].url,
+            "https://www.youtube.com/results?search_query=Iron+Man&friday_play=2",
+        )
+
 
 class BrowserWorkflowTests(unittest.TestCase):
+    def test_legacy_chrome_phrase_now_uses_friday_browser_by_default(self) -> None:
+        requests = []
+        unsubscribe = get_secure_browser_command_bus().subscribe(requests.append)
+        try:
+            result = run_browser_search(
+                "FRIDAY, open a new Chrome tab and search for Tony Stark.",
+                research=FakeResearchProvider(),
+            )
+        finally:
+            unsubscribe()
+
+        self.assertTrue(result.ok)
+        self.assertEqual(len(requests), 2)
+        self.assertEqual(requests[0].action, SecureBrowserAction.OPEN)
+        self.assertTrue(requests[0].animate_query)
+        self.assertIn("google.com/search", requests[0].url)
+        self.assertEqual(requests[0].query, "Tony Stark")
+        self.assertEqual(
+            requests[1].action,
+            SecureBrowserAction.NAVIGATE_CURRENT,
+        )
+        self.assertEqual(requests[1].url, "https://example.com/iron-man")
+        self.assertIn("FRIDAY Browser", result.message)
+
     def test_dry_run_opens_result_and_returns_readable_excerpt(self) -> None:
         backend = FakeChromeBackend()
         controller = ChromeController(backend=backend, step_delay=0, page_delay=0)
@@ -306,7 +379,7 @@ class BrowserWorkflowTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.query, "Iron Man")
         self.assertEqual(result.url, "https://example.com/iron-man")
-        self.assertIn("Here is a short passage", result.message)
+        self.assertIn("Here is a summary", result.message)
         self.assertIn("advanced powered armor", result.message)
 
     def test_reader_extracts_paragraph_and_ignores_navigation(self) -> None:

@@ -51,6 +51,8 @@ from friday.app.research import (
     is_web_research_request,
     research_public_web,
 )
+from friday.app.secure_browser import handle_secure_browser_message
+from friday.app.windows_launcher import extract_windows_app_query, open_app
 from friday.config import config
 from friday.core.llm import OpenAICompatibleChatClient, StaticLLMClient
 from friday.core.schemas import ChatMessage, LLMRequest
@@ -311,6 +313,32 @@ def _build_news_context_from_result(result) -> str:
         )
 
     return ""
+
+
+def _format_news_reply(result) -> str:
+    if result is None:
+        return "I could not reach the news service, boss."
+
+    if result.status != "ok" or not result.articles:
+        fallback = str(result.fallback_message or "").strip()
+        return fallback or "No relevant news is available right now, boss."
+
+    lines = ["Here is the latest news update, boss:"]
+    for index, article in enumerate(result.articles[:5], start=1):
+        title = " ".join(str(article.title or "").split()).strip()
+        source = " ".join(
+            str(
+                article.source_name
+                or article.source_id
+                or "news source"
+            ).split()
+        ).strip()
+        description = " ".join(str(article.description or "").split()).strip()
+        if len(description) > 220:
+            description = description[:217].rstrip() + "..."
+        detail = f" {description}" if description else ""
+        lines.append(f"{index}. {title} ({source}).{detail}")
+    return "\n".join(lines)
 
 
 def _build_llm_error_message(exc: Exception) -> str:
@@ -644,6 +672,76 @@ async def chat(payload: ConsoleChatRequest) -> dict:
             started_at=started_at,
         )
 
+    secure_browser_result = handle_secure_browser_message(payload.message)
+    if secure_browser_result.handled:
+        started_at = _route_neural_request(
+            trace_id,
+            NeuralNodeId.BROWSER,
+            event_type="browser.friday_window.started",
+            summary=payload.message,
+        )
+        return _send_neural_reply(
+            payload,
+            trace_id=trace_id,
+            source_node=NeuralNodeId.BROWSER,
+            assistant_content=secure_browser_result.message,
+            event_type="browser.friday_window.completed",
+            started_at=started_at,
+            status=(
+                NeuralEventStatus.SUCCESS
+                if secure_browser_result.accepted
+                else NeuralEventStatus.ERROR
+            ),
+        )
+
+    news_result = await asyncio.to_thread(_get_news_result, payload.message)
+    if (
+        news_result is not None
+        and news_result.is_news_intent
+        and news_result.status == "ok"
+    ):
+        started_at = _route_neural_request(
+            trace_id,
+            NeuralNodeId.LIVE_SEARCH,
+            event_type="search.news.started",
+            summary=payload.message,
+        )
+        return _send_neural_reply(
+            payload,
+            trace_id=trace_id,
+            source_node=NeuralNodeId.LIVE_SEARCH,
+            assistant_content=_format_news_reply(news_result),
+            event_type="search.news.completed",
+            started_at=started_at,
+            status=NeuralEventStatus.SUCCESS,
+        )
+
+    windows_app_query = extract_windows_app_query(payload.message)
+    if windows_app_query:
+        started_at = _route_neural_request(
+            trace_id,
+            NeuralNodeId.LOCAL_TOOLS,
+            event_type="local_tool.windows_app.started",
+            summary=windows_app_query,
+        )
+        launch_result = await asyncio.to_thread(
+            open_app,
+            query=windows_app_query,
+        )
+        return _send_neural_reply(
+            payload,
+            trace_id=trace_id,
+            source_node=NeuralNodeId.LOCAL_TOOLS,
+            assistant_content=launch_result.message,
+            event_type="local_tool.windows_app.completed",
+            started_at=started_at,
+            status=(
+                NeuralEventStatus.SUCCESS
+                if launch_result.ok
+                else NeuralEventStatus.ERROR
+            ),
+        )
+
     if _is_computer_command(payload.message):
         started_at = _route_neural_request(
             trace_id,
@@ -738,7 +836,6 @@ async def chat(payload: ConsoleChatRequest) -> dict:
         event_type="search.intent_check.started",
         summary="Checking whether current public information is required",
     )
-    news_result = await asyncio.to_thread(_get_news_result, payload.message)
     news_context = _build_news_context_from_result(news_result)
     emit_neural_activity(
         NeuralNodeId.LIVE_SEARCH,
@@ -790,6 +887,8 @@ async def chat(payload: ConsoleChatRequest) -> dict:
             news_context = ""
         elif should_research_question:
             research_failure = research_result.message
+        elif should_fallback_from_news:
+            research_failure = _format_news_reply(news_result)
 
     if research_failure:
         return _send_neural_reply(

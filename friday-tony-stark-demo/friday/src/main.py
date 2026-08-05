@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -16,18 +17,27 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
-from friday.src.config.settings import get_settings
-from friday.src.common.local_access import LocalAccessMiddleware
-from friday.src.common.runtime_logging import configure_runtime_logging
-from friday.src.router.api_router import api_router
-from friday.src.sse.routes import router as sse_router
-from friday.src.UI.routes import router as web_ui_router, mount_web_ui_static
 from friday.app.agent_console.service import get_agent_console_service
+from friday.app.calendar import (
+    CalendarReminderEvent,
+    get_calendar_reminder_bus,
+    get_calendar_service,
+)
 from friday.app.power import (
     AutoSleepMonitor,
     initialize_power_state,
     restore_application_windows,
 )
+from friday.src.common.local_access import LocalAccessMiddleware
+from friday.src.common.runtime_logging import configure_runtime_logging
+from friday.src.config.settings import get_settings
+from friday.src.router.api_router import api_router
+from friday.src.sse.broadcaster import publish_event
+from friday.src.sse.routes import router as sse_router
+from friday.src.UI.routes import mount_web_ui_static
+from friday.src.UI.routes import router as web_ui_router
+
+logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
@@ -36,6 +46,8 @@ def create_app() -> FastAPI:
         restore_application_windows()
     initialize_power_state(source="fastapi_startup")
     auto_sleep_monitor = AutoSleepMonitor()
+    calendar_service = get_calendar_service()
+    unsubscribe_calendar_sse = None
     app = FastAPI(
         title=settings.app_name,
         version="0.1.0",
@@ -62,6 +74,11 @@ def create_app() -> FastAPI:
 
     @app.on_event("shutdown")
     def archive_ui_chat_on_shutdown() -> None:
+        nonlocal unsubscribe_calendar_sse
+        calendar_service.stop()
+        if unsubscribe_calendar_sse is not None:
+            unsubscribe_calendar_sse()
+            unsubscribe_calendar_sse = None
         auto_sleep_monitor.stop()
         get_agent_console_service().archive_and_reset_chat(
             session_id="python-ui",
@@ -70,6 +87,32 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def warm_background_services() -> None:
+        nonlocal unsubscribe_calendar_sse
+        event_loop = asyncio.get_running_loop()
+
+        def forward_calendar_reminder(event: CalendarReminderEvent) -> None:
+            future = asyncio.run_coroutine_threadsafe(
+                publish_event(
+                    "agent",
+                    "calendar_reminder",
+                    event.to_dict(),
+                ),
+                event_loop,
+            )
+
+            def report_failure(completed) -> None:
+                try:
+                    completed.result()
+                except Exception:
+                    logger.exception("Could not publish calendar reminder to SSE")
+
+            future.add_done_callback(report_failure)
+
+        if unsubscribe_calendar_sse is None:
+            unsubscribe_calendar_sse = get_calendar_reminder_bus().subscribe(
+                forward_calendar_reminder
+            )
+        calendar_service.start()
         auto_sleep_monitor.start()
         if os.getenv("FRIDAY_BACKGROUND_WARMUP", "true").lower() not in {"1", "true", "yes", "on"}:
             return

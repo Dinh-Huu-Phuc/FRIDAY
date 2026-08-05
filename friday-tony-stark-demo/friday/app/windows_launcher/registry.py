@@ -5,12 +5,21 @@ from __future__ import annotations
 import json
 import os
 import platform
+import shutil
 import subprocess
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from friday.app.windows_launcher.schemas import AppMatch
+
+_WINDOWS_SYSTEM_APPS = {
+    "Calculator": "calc.exe",
+    "Command Prompt": "cmd.exe",
+    "File Explorer": "explorer.exe",
+    "Notepad": "notepad.exe",
+    "Task Manager": "taskmgr.exe",
+}
 
 
 def is_windows() -> bool:
@@ -21,12 +30,28 @@ def is_windows() -> bool:
 def discover_apps() -> tuple[AppMatch, ...]:
     """Return apps from Start Menu shortcuts and Windows Start app IDs."""
     if not is_windows():
-        return tuple()
+        return ()
 
     apps: list[AppMatch] = []
+    apps.extend(_discover_system_executables())
     apps.extend(_discover_start_menu_shortcuts())
     apps.extend(_discover_start_apps())
     return tuple(_dedupe_apps(apps))
+
+
+def _discover_system_executables() -> list[AppMatch]:
+    apps: list[AppMatch] = []
+    for name, executable in _WINDOWS_SYSTEM_APPS.items():
+        path = shutil.which(executable)
+        if path:
+            apps.append(
+                AppMatch(
+                    name=name,
+                    path=path,
+                    source="windows_system",
+                )
+            )
+    return apps
 
 
 def _discover_start_menu_shortcuts() -> list[AppMatch]:

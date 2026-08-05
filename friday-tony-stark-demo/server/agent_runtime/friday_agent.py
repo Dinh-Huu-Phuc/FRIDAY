@@ -4,12 +4,13 @@ import asyncio
 import os
 from collections import deque
 
+from livekit.agents import StopResponse
+from livekit.agents.llm import mcp
+from livekit.agents.voice import Agent
+from livekit.plugins import silero
+
 from friday.about import match_about_response
 from friday.app import open_social_platform, resolve_social_platform
-from friday.app.computer.dependencies import get_computer_service
-from friday.app.computer.schemas.requests import RunRequest
-from friday.app.computer.schemas.responses import RunResponse
-from friday.app.computer import is_screen_understanding_request, understand_current_screen
 from friday.app.agent_console.greeting_engine import build_time_greeting
 from friday.app.browser_automation import (
     is_binance_market_request,
@@ -19,7 +20,17 @@ from friday.app.browser_automation import (
     run_browser_search,
     run_platform_video_search,
 )
-from friday.app.messenger import check_latest_messenger_message, is_messenger_latest_request
+from friday.app.computer import (
+    is_screen_understanding_request,
+    understand_current_screen,
+)
+from friday.app.computer.dependencies import get_computer_service
+from friday.app.computer.schemas.requests import RunRequest
+from friday.app.computer.schemas.responses import RunResponse
+from friday.app.messenger import (
+    check_latest_messenger_message,
+    is_messenger_latest_request,
+)
 from friday.app.power import (
     PowerIntent,
     detect_power_intent,
@@ -35,17 +46,17 @@ from friday.app.research import (
     research_public_web,
     should_announce_search,
 )
+from friday.app.secure_browser import handle_secure_browser_message
 from friday.app.windows_launcher.service import open_app as open_windows_app
-from friday.gmail_system_agent import check_unread_gmail_with_timeout, format_gmail_report
+from friday.gmail_system_agent import (
+    check_unread_gmail_with_timeout,
+    format_gmail_report,
+)
 from friday.messages.promt_agent_friday import build_daily_briefing_runtime_hint
 from friday.news import NewsService
 from friday.prompts import build_social_open_runtime_hint
 from friday.refiner import STTCorrector
 from friday.trainModel.memory import MemoryManager
-from livekit.agents import StopResponse
-from livekit.agents.llm import mcp
-from livekit.agents.voice import Agent
-from livekit.plugins import silero
 from server.agent_runtime.bootstrap import logger, mcp_server_url
 from server.agent_runtime.intents import (
     extract_windows_app_query,
@@ -232,6 +243,19 @@ class FridayAgent(Agent):
                 browser_result.url[:240],
             )
             await self.session.say(browser_result.message, add_to_chat_ctx=True)
+            raise StopResponse()
+
+        secure_browser_result = handle_secure_browser_message(refined_user_text)
+        if secure_browser_result.handled:
+            logger.info(
+                "FRIDAY Browser command completed accepted=%s action=%s",
+                secure_browser_result.accepted,
+                secure_browser_result.action.value,
+            )
+            await self.session.say(
+                secure_browser_result.message,
+                add_to_chat_ctx=True,
+            )
             raise StopResponse()
 
         if is_messenger_latest_request(refined_user_text):

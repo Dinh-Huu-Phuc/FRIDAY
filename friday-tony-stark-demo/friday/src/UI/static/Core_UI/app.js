@@ -15,6 +15,7 @@ const defaults = {
 
 const state = {
   socket: null,
+  calendarEvents: null,
   coreState: "disconnected",
   powerState: "active",
   voiceUnlocked: false,
@@ -948,6 +949,45 @@ function connect() {
   })
 }
 
+function connectCalendarEvents() {
+  if (!window.EventSource || state.calendarEvents) return
+  const events = new EventSource("/sse/agent")
+  state.calendarEvents = events
+  events.addEventListener("calendar_reminder", (event) => {
+    let payload
+    try {
+      payload = JSON.parse(event.data)
+    } catch {
+      return
+    }
+
+    const audioTarget = String(payload.audio_target || "none")
+    const browserOwnsAudio = audioTarget === "web" || audioTarget === "all"
+    const message = payload.message
+    if (message?.id) {
+      state.messages = [
+        ...state.messages.filter((item) => item.id !== message.id),
+        message,
+      ].slice(-80)
+      if (!browserOwnsAudio) state.lastAssistantId = message.id
+      ConversationStack(state.messages)
+    } else if (browserOwnsAudio) {
+      void VoiceController.speak(String(payload.spoken_text || ""))
+    }
+
+    if (payload.sleeping) {
+      setCoreState("sleeping", "Calendar reminder delivered. FRIDAY remains asleep")
+    } else if (state.coreState !== "speaking") {
+      setCoreState("idle", `Reminder: ${String(payload.title || "scheduled activity")}`)
+    }
+  })
+  events.addEventListener("error", () => {
+    if (events.readyState === EventSource.CLOSED) {
+      state.calendarEvents = null
+    }
+  })
+}
+
 function CoreOrb() {
   applyAppearance()
   updateSleepClock()
@@ -969,6 +1009,8 @@ function CoreOrb() {
 
 window.addEventListener("pagehide", () => {
   SpeechInputController.stop()
+  state.calendarEvents?.close()
+  state.calendarEvents = null
   if (navigator.sendBeacon) {
     navigator.sendBeacon("/ui/chat/clear")
     return
@@ -984,3 +1026,4 @@ PromptInput()
 ConnectionIndicator()
 SettingsPanel()
 connect()
+connectCalendarEvents()
