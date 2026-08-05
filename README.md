@@ -23,7 +23,7 @@ Developer: Dinh Huu Phuc
 
 # BANNER FIRDAY
 
-![Banner FIRDAY](friday/assets/img/tanthuyhoangdev.png)
+![Banner FIRDAY]([friday/assets/img/tanthuyhoangdev.png](https://github.com/Dinh-Huu-Phuc/FRIDAY/blob/master/img/Friday.jpg))
 
 
 
