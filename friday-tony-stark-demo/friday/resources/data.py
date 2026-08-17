@@ -1,4 +1,4 @@
-"""
+t"""
 Data resources — expose static content or dynamic data via MCP resources.
 """
 

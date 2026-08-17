@@ -17,6 +17,7 @@ class LiveSearchResult:
     message: str
     sources: tuple[LiveSearchSource, ...] = field(default_factory=tuple)
     candidate_count: int = 0
+    direct_answer: str = ""
 
     @property
     def url(self) -> str:

@@ -5,18 +5,24 @@ import re
 from friday.app.code_map.schemas import CodeMapAction, CodeMapIntentMatch
 
 
-_PHRASES = {
-    "open code map": (CodeMapAction.OPEN, "open_default"),
-    "friday open code map": (CodeMapAction.OPEN, "open_friday"),
-    "show code map": (CodeMapAction.OPEN, "show_default"),
-    "friday show code map": (CodeMapAction.OPEN, "show_friday"),
-    "friday launch code map": (CodeMapAction.OPEN, "launch_friday"),
-    "close code map": (CodeMapAction.CLOSE, "close_default"),
-    "friday close code map": (CodeMapAction.CLOSE, "close_friday"),
-    "hide code map": (CodeMapAction.CLOSE, "hide_default"),
-    "friday hide code map": (CodeMapAction.CLOSE, "hide_friday"),
-    "friday close the code map": (CodeMapAction.CLOSE, "close_the_map"),
+_ACTION_BY_VERB = {
+    "open": CodeMapAction.OPEN,
+    "show": CodeMapAction.OPEN,
+    "launch": CodeMapAction.OPEN,
+    "display": CodeMapAction.OPEN,
+    "close": CodeMapAction.CLOSE,
+    "hide": CodeMapAction.CLOSE,
+    "dismiss": CodeMapAction.CLOSE,
 }
+_COMMAND_PATTERN = re.compile(
+    r"^(?:(?:hey\s+)?friday\s+)?"
+    r"(?:(?:please|kindly)\s+)?"
+    r"(?:(?:can|could|would|will)\s+you\s+)?"
+    r"(?:(?:please|kindly)\s+)?"
+    r"(?P<verb>open|show|launch|display|close|hide|dismiss)\s+"
+    r"(?:the\s+)?(?:code\s+map|codemap)"
+    r"(?:\s+(?:please|for\s+me))?$"
+)
 
 
 def normalize_code_map_phrase(value: str) -> str:
@@ -25,8 +31,11 @@ def normalize_code_map_phrase(value: str) -> str:
 
 
 def match_code_map_intent(message: str) -> CodeMapIntentMatch:
-    matched = _PHRASES.get(normalize_code_map_phrase(message))
+    matched = _COMMAND_PATTERN.fullmatch(normalize_code_map_phrase(message))
     if matched is None:
         return CodeMapIntentMatch()
-    action, trigger_id = matched
-    return CodeMapIntentMatch(action=action, trigger_id=trigger_id)
+    verb = matched.group("verb")
+    return CodeMapIntentMatch(
+        action=_ACTION_BY_VERB[verb],
+        trigger_id=f"code_map_{verb}",
+    )

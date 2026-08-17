@@ -98,6 +98,15 @@ def search_public_web(
 def optimize_search_query(query: str) -> str:
     candidate = " ".join(str(query or "").strip(" \t\r\n.,!?;:\"'").split())
     lowered = candidate.lower()
+    price = re.match(
+        r"^(?:today(?:'s)?\s+)?(?P<asset>.+?)\s+"
+        r"(?:(?:current|live)\s+)?(?:price|value|worth)(?:\s+(?:today|now))?$",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    if price:
+        return f"{price.group('asset')} price today"
+
     patterns = (
         r"^(?:who|what)\s+is\s+(?:the\s+)?current\s+(?P<role>.+?)\s+of\s+(?P<entity>.+)$",
         r"^current\s+(?P<role>ceo|president|chairman|owner|director)\s+(?:of\s+)?(?P<entity>.+)$",

@@ -39,6 +39,7 @@ from friday.app.neural_visual import (
     handle_neural_visual_message,
     new_neural_trace_id,
 )
+from friday.app.perception.window import handle_camera_window_message
 from friday.app.power import (
     PowerIntent,
     detect_power_intent,
@@ -533,6 +534,28 @@ async def chat(payload: ConsoleChatRequest) -> dict:
             started_at=started_at,
         )
 
+    camera_result = handle_camera_window_message(payload.message)
+    if camera_result.handled:
+        started_at = _route_neural_request(
+            trace_id,
+            NeuralNodeId.SCREEN_VISION,
+            event_type="vision.camera_window",
+            summary=payload.message,
+        )
+        return _send_neural_reply(
+            payload,
+            trace_id=trace_id,
+            source_node=NeuralNodeId.SCREEN_VISION,
+            assistant_content=camera_result.message,
+            event_type="vision.camera_window.completed",
+            started_at=started_at,
+            status=(
+                NeuralEventStatus.SUCCESS
+                if camera_result.accepted
+                else NeuralEventStatus.ERROR
+            ),
+        )
+
     code_map_result = handle_code_map_message(payload.message)
     if code_map_result.handled:
         started_at = _route_neural_request(
@@ -883,6 +906,14 @@ async def chat(payload: ConsoleChatRequest) -> dict:
             ),
             duration_ms=(time.perf_counter() - research_started_at) * 1000,
         )
+        if research_result.direct_answer:
+            return _send_neural_reply(
+                payload,
+                trace_id=trace_id,
+                source_node=NeuralNodeId.LIVE_SEARCH,
+                assistant_content=research_result.direct_answer,
+                event_type="search.market.completed",
+            )
         if web_research_context:
             news_context = ""
         elif should_research_question:

@@ -47,11 +47,27 @@ class _FakeCodeMapWindow(QObject):
         self.closed.emit()
 
 
-def test_code_map_intents_are_strict_and_allowlisted() -> None:
-    assert match_code_map_intent("FRIDAY, open code map!").action == CodeMapAction.OPEN
-    assert match_code_map_intent("Friday close the code map").action == CodeMapAction.CLOSE
-    assert match_code_map_intent("please open code map").action == CodeMapAction.NONE
+def test_code_map_intents_are_flexible_but_bounded() -> None:
+    open_samples = (
+        "FRIDAY, open code map!",
+        "Friday open the code map",
+        "Please open code map",
+        "Friday, could you please show the Code Map?",
+        "Hey Friday launch codemap for me",
+    )
+    close_samples = (
+        "Friday close the code map",
+        "Could you hide code map please?",
+        "FRIDAY dismiss the codemap",
+    )
+    for sample in open_samples:
+        assert match_code_map_intent(sample).action == CodeMapAction.OPEN
+    for sample in close_samples:
+        assert match_code_map_intent(sample).action == CodeMapAction.CLOSE
+
     assert match_code_map_intent("open code map in Chrome").action == CodeMapAction.NONE
+    assert match_code_map_intent("explain the code map").action == CodeMapAction.NONE
+    assert match_code_map_intent("open code mapping guide").action == CodeMapAction.NONE
 
 
 def test_command_bus_dispatches_and_unsubscribes() -> None:

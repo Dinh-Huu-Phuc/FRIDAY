@@ -28,6 +28,7 @@ from friday.app.power import (
     initialize_power_state,
     restore_application_windows,
 )
+from friday.runtime.vision_runtime import get_vision_runtime_decision
 from friday.src.common.local_access import LocalAccessMiddleware
 from friday.src.common.runtime_logging import configure_runtime_logging
 from friday.src.config.settings import get_settings
@@ -38,6 +39,20 @@ from friday.src.UI.routes import mount_web_ui_static
 from friday.src.UI.routes import router as web_ui_router
 
 logger = logging.getLogger(__name__)
+
+
+def _probe_vision_runtime() -> None:
+    decision = get_vision_runtime_decision(refresh=True)
+    logger.info(
+        "Vision runtime selected backend=%s profile=%s providers=%s input=%s detector_fps=%s",
+        decision.backend,
+        decision.profile,
+        ",".join(decision.execution_providers),
+        decision.input_size,
+        decision.detector_fps,
+    )
+    for warning in decision.warnings:
+        logger.info("Vision runtime note: %s", warning)
 
 
 def create_app() -> FastAPI:
@@ -114,6 +129,7 @@ def create_app() -> FastAPI:
             )
         calendar_service.start()
         auto_sleep_monitor.start()
+        asyncio.create_task(asyncio.to_thread(_probe_vision_runtime))
         if os.getenv("FRIDAY_BACKGROUND_WARMUP", "true").lower() not in {"1", "true", "yes", "on"}:
             return
         if os.getenv("FRIDAY_OLLAMA_PRELOAD", "true").lower() in {"1", "true", "yes", "on"}:

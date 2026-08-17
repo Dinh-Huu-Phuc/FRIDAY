@@ -30,11 +30,11 @@ class MessageBubble(QFrame):
         self.content = str(message.get("content") or "")
         role = str(message.get("role") or "assistant")
         self.setObjectName("userBubble" if role == "user" else "assistantBubble")
-        self.setFixedWidth(354)
+        self.setFixedWidth(278)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Maximum)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setContentsMargins(11, 9, 11, 9)
         layout.setSpacing(6)
         header = QHBoxLayout()
         stamp = _format_timestamp(str(message.get("timestamp") or ""))
@@ -62,7 +62,7 @@ class MessageBubble(QFrame):
         body.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         body.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         body.setMarkdown(self.content)
-        body.document().setTextWidth(322)
+        body.document().setTextWidth(246)
         body.setFixedHeight(
             max(32, min(320, math.ceil(body.document().size().height()) + 8))
         )

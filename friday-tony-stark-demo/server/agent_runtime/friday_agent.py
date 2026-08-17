@@ -27,10 +27,12 @@ from friday.app.computer import (
 from friday.app.computer.dependencies import get_computer_service
 from friday.app.computer.schemas.requests import RunRequest
 from friday.app.computer.schemas.responses import RunResponse
+from friday.app.code_map import handle_code_map_message
 from friday.app.messenger import (
     check_latest_messenger_message,
     is_messenger_latest_request,
 )
+from friday.app.perception.window import handle_camera_window_message
 from friday.app.power import (
     PowerIntent,
     detect_power_intent,
@@ -170,6 +172,26 @@ class FridayAgent(Agent):
             if power_intent == PowerIntent.SLEEP and not previous_power_state.sleeping:
                 minimize_result = await asyncio.to_thread(minimize_application_windows)
                 logger.info("Window minimize result: %s", minimize_result.message)
+            raise StopResponse()
+
+        camera_result = handle_camera_window_message(raw_user_text)
+        if camera_result.handled:
+            logger.info(
+                "Camera Window command completed accepted=%s action=%s",
+                camera_result.accepted,
+                camera_result.action.value,
+            )
+            await self.session.say(camera_result.message, add_to_chat_ctx=True)
+            raise StopResponse()
+
+        code_map_result = handle_code_map_message(raw_user_text)
+        if code_map_result.handled:
+            logger.info(
+                "Code Map command completed accepted=%s action=%s",
+                code_map_result.accepted,
+                code_map_result.action.value,
+            )
+            await self.session.say(code_map_result.message, add_to_chat_ctx=True)
             raise StopResponse()
 
         refined_user_text = raw_user_text
@@ -386,6 +408,12 @@ class FridayAgent(Agent):
             )
             web_research_context = build_web_research_context(research_result)
             web_research_url = research_result.url
+            if research_result.direct_answer:
+                await self.session.say(
+                    research_result.direct_answer,
+                    add_to_chat_ctx=True,
+                )
+                raise StopResponse()
             if web_research_context:
                 news_context = ""
                 logger.info(

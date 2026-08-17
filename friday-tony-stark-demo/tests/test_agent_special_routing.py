@@ -11,6 +11,10 @@ from friday.app.neural_visual import (
     NeuralVisualAction,
     get_neural_visual_command_bus,
 )
+from friday.app.perception.window import (
+    CameraWindowAction,
+    get_camera_window_command_bus,
+)
 from friday.app.research.schemas import LiveSearchResult
 from friday.app.secure_browser import (
     SecureBrowserAction,
@@ -22,6 +26,31 @@ from friday.src.services.agent.service import chat
 
 
 class AgentSpecialRoutingTests(unittest.TestCase):
+    def test_camera_window_route_dispatches_before_windows_launcher(self) -> None:
+        console = Mock()
+        console.send_assistant_reply.return_value = {"ok": True}
+        received: list[CameraWindowAction] = []
+        unsubscribe = get_camera_window_command_bus().subscribe(received.append)
+        try:
+            with (
+                patch(
+                    "friday.src.services.agent.service.get_agent_console_service",
+                    return_value=console,
+                ),
+                patch("friday.src.services.agent.service.open_app") as open_app,
+            ):
+                result = asyncio.run(
+                    chat(ConsoleChatRequest(message="FRIDAY, open camera."))
+                )
+        finally:
+            unsubscribe()
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(received, [CameraWindowAction.OPEN])
+        open_app.assert_not_called()
+        content = console.send_assistant_reply.call_args.kwargs["assistant_content"]
+        self.assertIn("Opening the Camera Window", content)
+
     def test_web_self_intro_sends_non_empty_prepared_response(self) -> None:
         console = Mock()
         console.send_assistant_reply.return_value = {"ok": True}
@@ -83,9 +112,13 @@ class AgentSpecialRoutingTests(unittest.TestCase):
                     return_value=console,
                 ),
                 patch("friday.src.services.agent.service.run_browser_search") as run_search,
-            ):
+                ):
                 result = asyncio.run(
-                    chat(ConsoleChatRequest(message="FRIDAY, open code map"))
+                    chat(
+                        ConsoleChatRequest(
+                            message="Friday, could you please open the code map?"
+                        )
+                    )
                 )
         finally:
             unsubscribe()
@@ -292,6 +325,51 @@ class AgentSpecialRoutingTests(unittest.TestCase):
         ]
         self.assertIn("news feed is unstable", content)
         self.assertNotIn("don't have access", content)
+
+    def test_live_crypto_price_returns_grounded_answer_without_llm_guessing(self) -> None:
+        console = Mock()
+        console.send_assistant_reply.return_value = {"ok": True}
+        console.get_snapshot.return_value = {"messages": []}
+        market_search_result = LiveSearchResult(
+            ok=True,
+            query="today's Bitcoin price",
+            message="Live cryptocurrency market data is available.",
+            direct_answer=(
+                "Bitcoin is currently trading at approximately 67,234.13 USDT "
+                "on Binance Spot."
+            ),
+        )
+        with (
+            patch(
+                "friday.src.services.agent.service.get_agent_console_service",
+                return_value=console,
+            ),
+            patch(
+                "friday.src.services.agent.service._get_news_result",
+                return_value=None,
+            ),
+            patch(
+                "friday.src.services.agent.service.research_public_web",
+                return_value=market_search_result,
+            ) as live_search,
+            patch(
+                "friday.src.services.agent.service._build_llm_client"
+            ) as build_llm,
+        ):
+            result = asyncio.run(
+                chat(
+                    ConsoleChatRequest(
+                        message="Please tell me today's Bitcoin price."
+                    )
+                )
+            )
+
+        self.assertEqual(result, {"ok": True})
+        live_search.assert_called_once()
+        build_llm.assert_not_called()
+        content = console.send_assistant_reply.call_args.kwargs["assistant_content"]
+        self.assertIn("67,234.13 USDT", content)
+        self.assertNotIn("don't have real-time access", content)
 
     def test_launch_visual_studio_code_uses_windows_launcher(self) -> None:
         console = Mock()

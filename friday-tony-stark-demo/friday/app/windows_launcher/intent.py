@@ -20,6 +20,8 @@ _NON_APPLICATION_TARGETS = {
     "all my monitors",
     "all my screens",
     "browser search",
+    "camera",
+    "camera window",
     "code map",
     "cycle",
     "live search",
@@ -28,6 +30,7 @@ _NON_APPLICATION_TARGETS = {
     "new tab",
     "the code map",
     "the neural network",
+    "webcam",
 }
 _BROWSER_ACTION_WORDS = {
     "binance",

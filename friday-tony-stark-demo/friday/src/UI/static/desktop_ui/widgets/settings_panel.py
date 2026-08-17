@@ -25,10 +25,10 @@ class SettingsPanel(QFrame):
         super().__init__(parent)
         self._settings = settings
         self.setObjectName("settingsPanel")
-        self.setFixedWidth(320)
+        self.setFixedWidth(286)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(16)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
 
         heading = QLabel("SETTINGS")
         heading.setObjectName("panelHeading")

@@ -10,7 +10,7 @@ WINDOWS_APP_CLEANUP_PATTERN = re.compile(
     re.IGNORECASE,
 )
 BROWSER_TARGET_PATTERN = re.compile(
-    r"\b(browser|binance|youtube|tik\s*tok|website|webpage|url|new\s+tab)\b",
+    r"\b(browser|binance|youtube|tik\s*tok|website|webpage|url|new\s+tab|camera|webcam)\b",
     re.IGNORECASE,
 )
 DAILY_BRIEFING_PATTERN = re.compile(

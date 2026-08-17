@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
+    QStyle,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -43,6 +44,7 @@ from friday.app.power import get_power_state, record_power_activity
 from friday.app.research import SEARCH_ACKNOWLEDGEMENT, should_announce_search
 from friday.src.services.agent.service import build_startup_briefing, chat
 from friday.src.UI.static.browser_ui import SecureBrowserWindowController
+from friday.src.UI.static.camera_ui import CameraWindowController
 from friday.src.UI.static.code_map_ui import CodeMapWindowController
 from friday.src.UI.static.desktop_ui.controllers.tasks import FunctionTask
 from friday.src.UI.static.desktop_ui.services.audio import (
@@ -56,6 +58,9 @@ from friday.src.UI.static.desktop_ui.widgets.neural_network_visual import (
     NeuralNetworkVisual,
 )
 from friday.src.UI.static.desktop_ui.widgets.settings_panel import SettingsPanel
+from friday.src.UI.static.desktop_ui.widgets.system_status_panel import (
+    SystemStatusPanel,
+)
 
 FRIDAY_DIR = Path(__file__).resolve().parents[4]
 CORE_VIDEO = FRIDAY_DIR / "assets" / "videos" / "FRIDAY.mp4"
@@ -112,6 +117,7 @@ class DesktopWindow(QMainWindow):
         self._microphone.transcript_ready.connect(self._on_transcript)
         self._microphone.error.connect(lambda message: self._set_status(message))
         self._secure_browser_controller = SecureBrowserWindowController(self)
+        self._camera_window_controller = CameraWindowController(self)
         self._code_map_controller = CodeMapWindowController(self)
         self._neural_visual_subscriber = (
             lambda action: self.neural_visual_action_requested.emit(action.value)
@@ -147,17 +153,24 @@ class DesktopWindow(QMainWindow):
         root.setObjectName("appRoot")
         self.setCentralWidget(root)
         shell = QVBoxLayout(root)
-        shell.setContentsMargins(20, 0, 20, 18)
-        shell.setSpacing(14)
+        shell.setContentsMargins(16, 0, 16, 14)
+        shell.setSpacing(10)
 
         top_bar = QFrame()
         top_bar.setObjectName("topBar")
         top = QHBoxLayout(top_bar)
-        top.setContentsMargins(0, 13, 0, 13)
-        top.setSpacing(12)
+        top.setContentsMargins(4, 10, 4, 10)
+        top.setSpacing(10)
+
+        brand_mark = QLabel("F")
+        brand_mark.setObjectName("brandMark")
+        brand_mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        brand_mark.setFixedSize(34, 34)
+        top.addWidget(brand_mark)
+
         identity = QVBoxLayout()
-        identity.setSpacing(2)
-        brand = QLabel("FRIDAY  /  LOCAL CORE")
+        identity.setSpacing(1)
+        brand = QLabel("FRIDAY Local Core")
         brand.setObjectName("brand")
         identity.addWidget(brand)
         brand_meta = QLabel("NATIVE INTELLIGENCE CONSOLE")
@@ -179,33 +192,39 @@ class DesktopWindow(QMainWindow):
         connection_layout.addWidget(connection_dot)
         connection_layout.addWidget(self.connection)
         top.addWidget(connection_pill)
+
+        voice_pill = QFrame()
+        voice_pill.setObjectName("voicePill")
+        voice_layout = QHBoxLayout(voice_pill)
+        voice_layout.setContentsMargins(10, 5, 10, 5)
+        voice_layout.setSpacing(7)
+        voice_dot = QLabel()
+        voice_dot.setObjectName("voiceDot")
+        voice_dot.setFixedSize(7, 7)
+        voice_layout.addWidget(voice_dot)
+        self.voice_link = QLabel("VOICE LINK / READY")
+        self.voice_link.setObjectName("voiceLink")
+        voice_layout.addWidget(self.voice_link)
+        top.addWidget(voice_pill)
+
         self.settings_button = QPushButton("Settings")
         self.settings_button.setObjectName("secondaryButton")
         self.settings_button.setToolTip("Open settings")
-        self.settings_button.setFixedHeight(36)
+        self.settings_button.setFixedHeight(32)
         self.settings_button.clicked.connect(self._toggle_settings)
         top.addWidget(self.settings_button)
         shell.addWidget(top_bar)
 
         content = QHBoxLayout()
-        content.setSpacing(14)
+        content.setSpacing(12)
         self.history = self._build_history()
         content.addWidget(self.history)
 
         stage = QFrame()
         stage.setObjectName("coreStage")
         stage_layout = QVBoxLayout(stage)
-        stage_layout.setContentsMargins(18, 14, 18, 14)
-        stage_layout.setSpacing(8)
-        stage_header = QHBoxLayout()
-        stage_title = QLabel("CORE VISUAL")
-        stage_title.setObjectName("sectionTitle")
-        stage_header.addWidget(stage_title)
-        stage_header.addStretch(1)
-        stage_meta = QLabel("VOICE LINK / READY")
-        stage_meta.setObjectName("sectionMeta")
-        stage_header.addWidget(stage_meta)
-        stage_layout.addLayout(stage_header)
+        stage_layout.setContentsMargins(0, 0, 0, 0)
+        stage_layout.setSpacing(6)
         self.visual_stack = QStackedWidget()
         self.visual_stack.setObjectName("visualStack")
         self.core_visual = CoreVisual()
@@ -231,6 +250,9 @@ class DesktopWindow(QMainWindow):
         stage_layout.addWidget(status_strip)
         content.addWidget(stage, 1)
 
+        self.system_panel = SystemStatusPanel()
+        content.addWidget(self.system_panel)
+
         self.settings_panel = SettingsPanel(self._settings)
         self.settings_panel.hide()
         self.settings_panel.visual_changed.connect(self._apply_visual)
@@ -239,11 +261,29 @@ class DesktopWindow(QMainWindow):
         content.addWidget(self.settings_panel)
         shell.addLayout(content, 1)
 
+        command_row = QFrame()
+        command_row.setObjectName("commandRow")
+        command_row_layout = QHBoxLayout(command_row)
+        command_row_layout.setContentsMargins(0, 0, 0, 0)
+        command_row_layout.setSpacing(0)
+        command_row_layout.addStretch(1)
+
         command = QFrame()
         command.setObjectName("commandBar")
+        command.setMinimumWidth(560)
+        command.setMaximumWidth(860)
+        command.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         command_layout = QHBoxLayout(command)
-        command_layout.setContentsMargins(12, 9, 10, 9)
-        command_layout.setSpacing(10)
+        command_layout.setContentsMargins(7, 6, 7, 6)
+        command_layout.setSpacing(9)
+
+        mic_core = QLabel("MIC")
+        mic_core.setObjectName("micCore")
+        mic_core.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        mic_core.setFixedSize(44, 44)
+        mic_core.setToolTip("Always-on microphone status")
+        command_layout.addWidget(mic_core)
+
         mic_block = QWidget()
         mic_block.setObjectName("micBlock")
         mic_layout = QVBoxLayout(mic_block)
@@ -258,15 +298,20 @@ class DesktopWindow(QMainWindow):
         self.input = QTextEdit()
         self.input.setObjectName("commandInput")
         self.input.setPlaceholderText("Talk or type to FRIDAY...")
-        self.input.setFixedHeight(50)
+        self.input.setFixedHeight(44)
         self.input.installEventFilter(self)
         command_layout.addWidget(self.input, 1)
-        self.send_button = QPushButton("Send")
-        self.send_button.setObjectName("primaryButton")
-        self.send_button.setFixedSize(88, 42)
+        self.send_button = QPushButton()
+        self.send_button.setObjectName("sendButton")
+        self.send_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowUp))
+        self.send_button.setAccessibleName("Send message")
+        self.send_button.setToolTip("Send message")
+        self.send_button.setFixedSize(46, 46)
         self.send_button.clicked.connect(lambda _checked=False: self.send_message())
         command_layout.addWidget(self.send_button)
-        shell.addWidget(command)
+        command_row_layout.addWidget(command, 1)
+        command_row_layout.addStretch(1)
+        shell.addWidget(command_row)
 
         self._video_audio = QAudioOutput(self)
         self._video_audio.setMuted(True)
@@ -283,12 +328,12 @@ class DesktopWindow(QMainWindow):
     def _build_history(self) -> QFrame:
         history = QFrame()
         history.setObjectName("historyPanel")
-        history.setMinimumWidth(360)
-        history.setMaximumWidth(420)
+        history.setMinimumWidth(306)
+        history.setMaximumWidth(326)
         history.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         layout = QVBoxLayout(history)
-        layout.setContentsMargins(14, 14, 10, 12)
-        layout.setSpacing(10)
+        layout.setContentsMargins(12, 12, 8, 10)
+        layout.setSpacing(8)
         header = QHBoxLayout()
         titles = QVBoxLayout()
         titles.setSpacing(2)
@@ -523,7 +568,10 @@ class DesktopWindow(QMainWindow):
         self._set_status(f"Video unavailable: {message or 'unsupported media'}")
 
     def _toggle_settings(self) -> None:
-        self.settings_panel.setVisible(not self.settings_panel.isVisible())
+        show_settings = not self.settings_panel.isVisible()
+        self.system_panel.setVisible(not show_settings)
+        self.settings_panel.setVisible(show_settings)
+        self.settings_button.setText("Close" if show_settings else "Settings")
 
     def _on_voice_changed(self, enabled: bool) -> None:
         self._speech.set_enabled(enabled)
@@ -532,9 +580,13 @@ class DesktopWindow(QMainWindow):
     def _on_recording_changed(self, recording: bool) -> None:
         if not recording:
             self.mic_status.setText("MIC  UNAVAILABLE")
+            self.voice_link.setText("VOICE LINK / OFFLINE")
 
     def _on_listening_changed(self, listening: bool) -> None:
         self.mic_status.setText("MIC  LISTENING" if listening else "MIC  PAUSED")
+        self.voice_link.setText(
+            "VOICE LINK / READY" if listening else "VOICE LINK / STANDBY"
+        )
 
     def _on_speech_started(self) -> None:
         self._voice_trace_id = new_neural_trace_id()
@@ -545,6 +597,7 @@ class DesktopWindow(QMainWindow):
             summary="Live speech detected",
         )
         self.mic_status.setText("MIC  HEARING")
+        self.voice_link.setText("VOICE LINK / HEARING")
         self._set_status("Listening")
         self._set_visual_state("listening")
 
@@ -560,14 +613,19 @@ class DesktopWindow(QMainWindow):
                 summary="Captured audio sent for speech recognition",
             )
             self.mic_status.setText("MIC  PROCESSING")
+            self.voice_link.setText("VOICE LINK / PROCESSING")
             self._set_status("Transcribing")
             self._set_visual_state("thinking")
 
     def _on_audio_level(self, level: float) -> None:
         self.mic_waveform.set_level(level)
+        self.core_visual.set_audio_level(level)
 
     def _on_speaking_changed(self, active: bool) -> None:
         self._voice_active = active
+        self.voice_link.setText(
+            "VOICE LINK / SPEAKING" if active else "VOICE LINK / READY"
+        )
         self._set_visual_state(
             "speaking"
             if active
@@ -608,6 +666,7 @@ class DesktopWindow(QMainWindow):
         if sleeping:
             self._set_visual_state("sleeping")
             self._secure_browser_controller.close_all_windows()
+            self._camera_window_controller.close_window()
             self._code_map_controller.close_window()
             self.hide()
         else:
@@ -625,6 +684,7 @@ class DesktopWindow(QMainWindow):
     def _set_visual_state(self, state: str) -> None:
         self.core_visual.set_state(state)
         self.neural_visual.set_state(state)
+        self.system_panel.set_core_state(state)
 
     def _update_microphone_gate(self) -> None:
         if hasattr(self, "_microphone"):
@@ -638,6 +698,7 @@ class DesktopWindow(QMainWindow):
         self._unsubscribe_neural_visual()
         self._unsubscribe_neural_telemetry()
         self._secure_browser_controller.shutdown()
+        self._camera_window_controller.shutdown()
         self._code_map_controller.shutdown()
         if self._microphone.recording:
             self._microphone.stop()

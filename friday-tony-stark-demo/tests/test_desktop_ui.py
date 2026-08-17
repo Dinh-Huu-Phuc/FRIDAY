@@ -4,12 +4,13 @@ import os
 import struct
 import wave
 from io import BytesIO
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from PySide6.QtCore import QEventLoop, QThreadPool, QTimer
+from PySide6.QtCore import QEventLoop, QSettings, QThreadPool, QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication, QTextBrowser
 
@@ -25,10 +26,14 @@ from friday.src.UI.static.desktop_ui.services.audio import (
     pcm16_rms,
     pcm_to_wav,
 )
+import friday.src.UI.static.desktop_ui.widgets.settings_panel as settings_module
 from friday.src.UI.static.desktop_ui.widgets.core_visual import CoreVisual
 from friday.src.UI.static.desktop_ui.widgets.message_bubble import MessageBubble
 from friday.src.UI.static.desktop_ui.widgets.neural_network_visual import (
     NeuralNetworkVisual,
+)
+from friday.src.UI.static.desktop_ui.widgets.system_status_panel import (
+    SystemStatusPanel,
 )
 from friday.src.UI.static.desktop_ui.window import DesktopWindow
 
@@ -146,11 +151,41 @@ def test_core_visual_renders_offscreen() -> None:
     _app()
     visual = CoreVisual()
     visual.resize(420, 420)
+    visual.set_state("thinking")
+    visual.set_audio_level(0.82)
     image = visual.grab().toImage()
 
     assert not image.isNull()
     assert image.width() == 420
     assert image.height() == 420
+
+
+def test_visual_settings_keep_orb_video_and_neural_modes(tmp_path, monkeypatch) -> None:
+    _app()
+    monkeypatch.setattr(
+        settings_module,
+        "get_auto_sleep_settings",
+        lambda: SimpleNamespace(minutes=15),
+    )
+    settings = QSettings(str(tmp_path / "desktop-ui.ini"), QSettings.Format.IniFormat)
+    panel = settings_module.SettingsPanel(settings)
+
+    panel.select_visual("video")
+    assert settings.value("appearance/visual") == "video"
+    panel.select_visual("neural")
+    assert settings.value("appearance/visual") == "neural"
+    panel.select_visual("orb")
+    assert settings.value("appearance/visual") == "orb"
+
+
+def test_system_status_panel_tracks_visual_runtime_state() -> None:
+    _app()
+    panel = SystemStatusPanel()
+
+    panel.set_core_state("speaking")
+    assert panel.runtime_state.text() == "SPEAKING"
+    panel.set_core_state("sleeping")
+    assert panel.runtime_state.text() == "SLEEPING"
 
 
 def test_neural_network_visual_renders_nodes_edges_and_motion() -> None:

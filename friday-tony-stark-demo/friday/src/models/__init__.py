@@ -12,6 +12,7 @@ from friday.core.db.models import (
     ScreenCaptureAsset,
     ScreenCaptureRecord,
 )
+from friday.core.memory_database.models import Memory
 
 __all__ = [
     "AuthLoginAudit",
@@ -24,4 +25,5 @@ __all__ = [
     "CoreAccessCredential",
     "ScreenCaptureAsset",
     "ScreenCaptureRecord",
+    "Memory",
 ]

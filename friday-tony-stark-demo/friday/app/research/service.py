@@ -2,13 +2,34 @@
 
 from __future__ import annotations
 
+from friday.app.market_data import get_crypto_price, parse_crypto_price_request
+
 from .intents import build_research_query
 from .live_search import search_public_web
-from .schemas import LiveSearchResult
+from .schemas import LiveSearchResult, LiveSearchSource
 
 
 def research_public_web(message: str) -> LiveSearchResult:
-    return search_public_web(build_research_query(message))
+    query = build_research_query(message)
+    market_request = parse_crypto_price_request(query)
+    if market_request is not None:
+        market_result = get_crypto_price(market_request)
+        if market_result.ok:
+            return LiveSearchResult(
+                ok=True,
+                query=query,
+                message="Live cryptocurrency market data is available.",
+                sources=(
+                    LiveSearchSource(
+                        title=f"Binance Spot {market_request.pair} live price",
+                        url=market_result.source_url,
+                        excerpt=market_result.excerpt,
+                    ),
+                ),
+                candidate_count=1,
+                direct_answer=market_result.message,
+            )
+    return search_public_web(query)
 
 
 def build_web_research_context(result: LiveSearchResult) -> str:

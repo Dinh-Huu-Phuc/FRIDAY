@@ -83,6 +83,9 @@ class ResearchRoutingTests(unittest.TestCase):
             "Who is Robert Downey Jr?",
             "What is a black hole?",
             "Tell me about tomato plants",
+            "Please tell me today's Bitcoin price.",
+            "Could you give me the current USD exchange rate?",
+            "What is the football score right now?",
             "Latest World Cup news",
             "Who invented email?",
         )
@@ -97,6 +100,7 @@ class ResearchRoutingTests(unittest.TestCase):
             "Do you know what I am looking at on this screen?",
             "What am I looking at?",
             "Check my Gmail",
+            "Please open a browser and search today's Bitcoin price",
         )
         for sample in samples:
             with self.subTest(sample=sample):
@@ -106,6 +110,16 @@ class ResearchRoutingTests(unittest.TestCase):
         self.assertEqual(
             build_research_query("FRIDAY, what is a black hole?"),
             "what is a black hole",
+        )
+
+    def test_research_query_removes_polite_request_wrappers(self) -> None:
+        self.assertEqual(
+            build_research_query("Please tell me today's Bitcoin price."),
+            "today's Bitcoin price",
+        )
+        self.assertEqual(
+            build_research_query("Friday, could you give me the current ETH price?"),
+            "the current ETH price",
         )
 
     def test_context_requires_content_read_from_an_opened_page(self) -> None:
@@ -211,6 +225,10 @@ class ResearchRoutingTests(unittest.TestCase):
         self.assertEqual(
             optimize_search_query("Latest World Cup news"),
             "World Cup news latest",
+        )
+        self.assertEqual(
+            optimize_search_query("today's Bitcoin price"),
+            "Bitcoin price today",
         )
 
 

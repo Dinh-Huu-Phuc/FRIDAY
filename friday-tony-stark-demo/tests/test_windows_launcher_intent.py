@@ -28,6 +28,8 @@ def test_rejects_commands_owned_by_other_agent_routes() -> None:
     assert extract_windows_app_query("FRIDAY, open browser settings.") is None
     assert extract_windows_app_query("FRIDAY, open YouTube and search Iron Man.") is None
     assert extract_windows_app_query("FRIDAY, open Binance Bitcoin market.") is None
+    assert extract_windows_app_query("FRIDAY, open camera.") is None
+    assert extract_windows_app_query("FRIDAY, show webcam.") is None
 
 
 def test_discovers_standard_windows_executables() -> None:
