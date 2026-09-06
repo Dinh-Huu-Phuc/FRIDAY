@@ -31,6 +31,7 @@ class VisionKeyframe:
     scene_signature: tuple[tuple[str, int], ...]
     latest_event_id: str = ""
     jpeg_bytes: bytes = field(default=b"", repr=False)
+    world_summary: str = ""
 
     @property
     def byte_size(self) -> int:

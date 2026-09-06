@@ -47,6 +47,7 @@ from friday.app.perception.tracking import (
     TargetLocker,
     TrackingDependencyError,
 )
+from friday.app.perception.world import WorldEvent, WorldModel, WorldSnapshot
 from friday.app.spatial.exceptions import CameraUnavailableError, VisionDependencyError
 from friday.runtime.vision_runtime import get_vision_runtime_decision
 
@@ -64,14 +65,17 @@ class PerceptionService:
         detector_factory: DetectorFactory = OnnxObjectDetector,
         state_store: SceneStateStore | None = None,
         keyframe_store: KeyframeStore | None = None,
+        world_model: WorldModel | None = None,
     ) -> None:
         self._manager = manager or get_camera_manager()
         self._detector_factory = detector_factory
         self._state_store = state_store or SceneStateStore()
         self._keyframes = keyframe_store or KeyframeStore()
+        self._world = world_model or WorldModel()
         self._owner = f"object-detection:{id(self)}"
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
+        self._stopping = False
         self._thread: threading.Thread | None = None
         self._camera_index: int | None = None
         self._grounding_result: GroundingResult | None = None
@@ -79,19 +83,21 @@ class PerceptionService:
 
     def start(self, camera_index: int | None = None) -> bool:
         if not detection_enabled():
-            self._state_store.update(SceneSnapshot.idle(status="disabled"))
+            self._publish_scene(SceneSnapshot.idle(status="disabled"))
             return False
 
         target_index = (
             get_default_camera_index() if camera_index is None else camera_index
         )
         with self._lock:
+            if self._stopping:
+                return False
             if self._thread is not None and self._thread.is_alive():
                 return self._camera_index == target_index
             try:
                 self._manager.acquire(self._owner, target_index)
             except (CameraUnavailableError, VisionDependencyError, ValueError) as exc:
-                self._state_store.update(
+                self._publish_scene(
                     SceneSnapshot.idle(status="error", error=str(exc))
                 )
                 return False
@@ -101,7 +107,7 @@ class PerceptionService:
             self._keyframes.reset()
             self._grounding_result = None
             self._segmentation_result = None
-            self._state_store.update(SceneSnapshot.idle(status="loading"))
+            self._publish_scene(SceneSnapshot.idle(status="loading"))
             self._thread = threading.Thread(
                 target=self._run,
                 name="friday-object-detection",
@@ -111,25 +117,37 @@ class PerceptionService:
         return True
 
     def stop(self) -> None:
+        """Stop analysis while retaining session world knowledge.
+
+        A slow detector can finish but cannot publish after stop or overlap its
+        replacement. Call reset_world() to explicitly forget visual history.
+        """
         from friday.app.perception.segmentation.service import (
             stop_segmentation_for_perception,
         )
 
-        stop_segmentation_for_perception(self)
         with self._lock:
+            if self._stopping:
+                return
+            self._stopping = True
             thread = self._thread
             self._stop_event.set()
-        if thread is not None and thread is not threading.current_thread():
-            thread.join(timeout=2.0)
-        self._manager.release(self._owner)
-        with self._lock:
-            self._thread = None
-            self._camera_index = None
-        self._keyframes.reset()
-        with self._lock:
-            self._grounding_result = None
-            self._segmentation_result = None
-        self._state_store.update(SceneSnapshot.idle())
+        try:
+            stop_segmentation_for_perception(self)
+            if thread is not None and thread is not threading.current_thread():
+                thread.join(timeout=2.0)
+            self._manager.release(self._owner)
+        finally:
+            with self._lock:
+                self._thread = (
+                    thread if thread is not None and thread.is_alive() else None
+                )
+                self._camera_index = None
+                self._keyframes.reset()
+                self._grounding_result = None
+                self._segmentation_result = None
+                self._publish_scene(SceneSnapshot.idle())
+                self._stopping = False
 
     def snapshot(self) -> SceneSnapshot:
         return self._state_store.snapshot()
@@ -139,6 +157,32 @@ class PerceptionService:
 
     def temporal_snapshot(self) -> TemporalSceneSnapshot:
         return self._state_store.temporal_snapshot()
+
+    def world_snapshot(self) -> WorldSnapshot:
+        return self._world.snapshot()
+
+    def describe_world(self, *, question: str = "", max_chars: int = 2400) -> str:
+        return self._world.describe(question=question, max_chars=max_chars)
+
+    def recent_world_events(self, *, limit: int = 20) -> tuple[WorldEvent, ...]:
+        return self._world.recent_events(limit=limit)
+
+    def reset_world(self) -> None:
+        """Forget visual world knowledge; live detection can build new identities."""
+        with self._lock:
+            self._world.reset()
+
+    def _publish_scene(
+        self,
+        snapshot: SceneSnapshot,
+        *,
+        hand_observations: tuple[HandObservation, ...] | None = None,
+    ) -> None:
+        with self._lock:
+            if snapshot.status == "ready" and self._stop_event.is_set():
+                return
+            self._state_store.update(snapshot, hand_observations=hand_observations)
+            self._world.update(snapshot, self._state_store.temporal_snapshot())
 
     def latest_keyframe(self) -> VisionKeyframe | None:
         return self._keyframes.latest()
@@ -240,7 +284,7 @@ class PerceptionService:
                     status="ready",
                     model_name=detector.name,
                 )
-                self._state_store.update(
+                self._publish_scene(
                     snapshot,
                     hand_observations=hand_observations,
                 )
@@ -320,12 +364,12 @@ class PerceptionService:
                 self._stop_event.wait(min(0.02, max(0.001, wait_until - now)))
         except (DetectionModelError, TrackingDependencyError) as exc:
             LOGGER.warning("Camera detector unavailable: %s", exc)
-            self._state_store.update(
+            self._publish_scene(
                 SceneSnapshot.idle(status="error", error=str(exc))
             )
         except Exception as exc:
             LOGGER.exception("Camera perception worker stopped unexpectedly")
-            self._state_store.update(
+            self._publish_scene(
                 SceneSnapshot.idle(
                     status="error",
                     error=f"camera analysis stopped: {exc}",

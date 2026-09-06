@@ -397,6 +397,64 @@ If FRIDAY says the app opened but nothing appears:
 
 ---
 
+## Session Visual World Model
+
+The existing detector, ByteTrack, SceneStateStore, and hand relation engine feed
+`friday/app/perception/world`. Only real detector samples update world evidence;
+tracker prediction frames cannot move remembered positions or duplicate events.
+No additional model, frame archive, database table, or migration is required.
+
+While the camera is running, ask `FRIDAY, where did I leave the bottle?` or
+`FRIDAY, where did I put my cup?`. Vision reasoning receives a bounded summary of
+current entities and meaningful history. The same evidence is available in the
+fallback answer when Ollama or the camera is unavailable. Locations describe the
+image (left/right/center), not a verified desk, room, owner, or 3D coordinate.
+
+Python callers can use the existing service:
+
+```python
+from friday.app.perception.service import get_perception_service
+
+perception = get_perception_service()
+snapshot = perception.world_snapshot().to_dict()
+summary = perception.describe_world(question="Where did I leave the bottle?")
+events = perception.recent_world_events(limit=20)
+perception.reset_world()  # Explicitly forget all session world knowledge.
+```
+
+Entity IDs are separate from track IDs. Returning objects reuse an identity only
+when class, label, elapsed time, normalized position, size, and confidence support
+an unambiguous match in both directions. Similar objects can remain ambiguous;
+FRIDAY creates a new entity instead of claiming certain physical identity.
+
+`stop()`, errors, and temporary camera restarts preserve entities and history in
+the same PerceptionService instance. They invalidate tracker aliases and current
+relations, and mark visibility unknown. New observations establish visibility
+again. A full `reset_world()` or app/process exit clears that knowledge. This is
+bounded in-memory persistence, not durable storage across application launches.
+Changing the camera viewpoint also makes spatial matching less reliable.
+
+Optional `.env` settings (blank values use these defaults):
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `FRIDAY_VISION_WORLD_ENTITY_MATCH_TIMEOUT` | `8.0` | Maximum seconds since last sighting for reassociation |
+| `FRIDAY_VISION_WORLD_SPATIAL_MATCH_THRESHOLD` | `0.12` | Maximum center distance in normalized image coordinates |
+| `FRIDAY_VISION_WORLD_SIZE_SIMILARITY_THRESHOLD` | `0.65` | Minimum width and height ratios |
+| `FRIDAY_VISION_WORLD_MINIMUM_MATCH_CONFIDENCE` | `0.6` | Minimum confidence for reassociation |
+| `FRIDAY_VISION_WORLD_AMBIGUITY_MARGIN` | `0.15` | Minimum score gap between competing matches |
+| `FRIDAY_VISION_WORLD_EVENT_RETENTION_SECONDS` | `1800.0` | Maximum journal event age |
+| `FRIDAY_VISION_WORLD_MAXIMUM_ENTITIES` | `128` | Entity limit; oldest unreserved entities are evicted first |
+| `FRIDAY_VISION_WORLD_MAXIMUM_EVENTS` | `256` | Event count limit |
+
+Memory limits also apply to tracker aliases, current relations, and prompt
+summaries. Forgotten entities can remain referenced by retained historical events;
+event descriptions are self-contained. All world mutations and detached snapshots
+are protected by a single lock; the realtime loop performs only bounded CPU work.
+
+Run `uv run --with pytest pytest -q tests/test_visual_world_model.py` for identity,
+lifecycle, relation, concurrency, bounded-memory, and reasoning integration tests.
+
 ## License
 
 MIT

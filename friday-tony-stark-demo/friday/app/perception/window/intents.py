@@ -53,6 +53,7 @@ _ANALYSIS_PATTERNS = (
     r"^(?:friday )?(?:what|who|where|how many|is|are) .*(?:camera|webcam).*$",
     r"^(?:friday )?what (?:am i|is the person) holding$",
     r"^(?:friday )?what changed in front of (?:camera|webcam)$",
+    r"^(?:friday )?(?:please )?where did i (?:leave|put|place) (?:my|the|that) .+$",
 )
 
 
