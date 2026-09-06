@@ -54,8 +54,8 @@ from friday.src.UI.static.desktop_ui.services.audio import (
 from friday.src.UI.static.desktop_ui.widgets.audio_waveform import AudioWaveform
 from friday.src.UI.static.desktop_ui.widgets.core_visual import CoreVisual
 from friday.src.UI.static.desktop_ui.widgets.message_bubble import MessageBubble
-from friday.src.UI.static.desktop_ui.widgets.neural_network_visual import (
-    NeuralNetworkVisual,
+from friday.src.UI.static.desktop_ui.widgets.neural_network_visual_3d import (
+    NeuralNetworkVisual3D,
 )
 from friday.src.UI.static.desktop_ui.widgets.settings_panel import SettingsPanel
 from friday.src.UI.static.desktop_ui.widgets.system_status_panel import (
@@ -229,7 +229,10 @@ class DesktopWindow(QMainWindow):
         self.visual_stack.setObjectName("visualStack")
         self.core_visual = CoreVisual()
         self.visual_stack.addWidget(self.core_visual)
-        self.neural_visual = NeuralNetworkVisual()
+        self.neural_visual = NeuralNetworkVisual3D()
+        self.neural_visual.render_failed.connect(
+            self._on_neural_render_failed
+        )
         self.visual_stack.addWidget(self.neural_visual)
         self.video_widget = QVideoWidget()
         self.video_widget.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatioByExpanding)
@@ -556,6 +559,10 @@ class DesktopWindow(QMainWindow):
             self.settings_panel.select_visual(target)
             self._set_status("Neural Network closed")
 
+    def _on_neural_render_failed(self, message: str) -> None:
+        if self._active_visual == "neural":
+            self._set_status(message)
+
     def _on_video_status(self, status: QMediaPlayer.MediaStatus) -> None:
         if status == QMediaPlayer.MediaStatus.InvalidMedia:
             self._handle_video_error("The selected video cannot be decoded.")
@@ -704,5 +711,6 @@ class DesktopWindow(QMainWindow):
             self._microphone.stop()
         self._speech.set_enabled(False)
         self._video_player.stop()
+        self.neural_visual.shutdown()
         self.closing.emit()
         super().closeEvent(event)

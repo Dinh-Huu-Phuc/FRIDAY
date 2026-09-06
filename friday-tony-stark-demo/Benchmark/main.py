@@ -76,11 +76,21 @@ def _print_report(report) -> None:
     print(f"Ollama preload: {'enabled' if decision.ollama_preload else 'disabled'}")
     if report.metrics.available:
         print(
-            "Preprocess    : "
-            f"{report.metrics.average_preprocess_ms} ms / {report.metrics.preprocess_fps} FPS"
+            "Inference     : "
+            f"{report.metrics.average_inference_ms} ms / {report.metrics.inference_fps} FPS"
+        )
+        print(
+            "Full pipeline : "
+            f"{report.metrics.average_pipeline_ms} ms / {report.metrics.pipeline_fps} FPS"
+        )
+        active = ", ".join(report.metrics.active_providers) or "none"
+        print(f"Active ORT EP : {active}")
+        print(
+            "Model input   : "
+            f"{report.metrics.model_input_width}x{report.metrics.model_input_height}"
         )
     else:
-        print(f"Preprocess    : unavailable ({report.metrics.note})")
+        print(f"Inference     : unavailable ({report.metrics.note})")
     print("\nDecision reasons:")
     for reason in decision.reasons:
         print(f"  + {reason}")

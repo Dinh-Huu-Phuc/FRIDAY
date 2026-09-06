@@ -1,5 +1,6 @@
 from friday.core.hardware.benchmark import (
     create_benchmark_report,
+    run_detector_benchmark,
     run_preprocess_benchmark,
 )
 from friday.core.hardware.env_sync import apply_decision_to_env, decision_env_values
@@ -26,5 +27,6 @@ __all__ = [
     "find_project_root",
     "probe_hardware",
     "project_python",
+    "run_detector_benchmark",
     "run_preprocess_benchmark",
 ]

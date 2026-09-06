@@ -115,7 +115,7 @@ NEURAL_NODES = (
     NeuralNodeDefinition(
         NeuralNodeId.SCREEN_VISION,
         "VISION",
-        "Captures and understands the active computer display.",
+        "Builds camera and screen keyframes with tracked scene context.",
         "PERCEPTION",
         0.49,
         0.55,
@@ -205,6 +205,7 @@ NEURAL_EDGES = (
     _edge(NeuralNodeId.POWER, NeuralNodeId.RESPONSE, -0.08),
     _edge(NeuralNodeId.BROWSER, NeuralNodeId.RESPONSE, -0.05),
     _edge(NeuralNodeId.LIVE_SEARCH, NeuralNodeId.RESPONSE, -0.02),
+    _edge(NeuralNodeId.SCREEN_VISION, NeuralNodeId.LLM, 0.04),
     _edge(NeuralNodeId.SCREEN_VISION, NeuralNodeId.RESPONSE, 0.02),
     _edge(NeuralNodeId.INTEGRATIONS, NeuralNodeId.RESPONSE, 0.05),
     _edge(NeuralNodeId.LOCAL_TOOLS, NeuralNodeId.RESPONSE, 0.08),

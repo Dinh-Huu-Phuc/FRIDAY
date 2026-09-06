@@ -11,12 +11,14 @@ _BACKEND_PROVIDERS = {
     "openvino": "OpenVINOExecutionProvider",
     "cpu": "CPUExecutionProvider",
 }
-_BACKEND_PRIORITY = ("tensorrt", "cuda", "directml", "openvino", "cpu")
+# CUDA is the conservative NVIDIA default. ORT can advertise TensorRT even
+# when the separate TensorRT runtime DLLs are not installed on the machine.
+_BACKEND_PRIORITY = ("cuda", "tensorrt", "directml", "openvino", "cpu")
 _PROFILE_SETTINGS = {
     "cpu_safe": (320, 3, 15, "yolo26n-onnx"),
-    "low_vram": (416, 7, 20, "yolo26n-onnx"),
-    "balanced": (512, 10, 24, "rfdetr-nano-onnx"),
-    "performance": (640, 15, 30, "rfdetr-small-onnx"),
+    "low_vram": (320, 7, 20, "yolo26n-onnx"),
+    "balanced": (320, 10, 24, "yolo26n-onnx"),
+    "performance": (320, 15, 30, "yolo26n-onnx"),
 }
 
 

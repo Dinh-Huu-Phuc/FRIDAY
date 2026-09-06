@@ -5,7 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from friday.core.memory_database import (
+from friday.core.db.memory_database import (
     InvalidMemoryQueryError,
     MemoryNotFoundError,
     MemoryRepository,

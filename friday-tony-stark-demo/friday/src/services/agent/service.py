@@ -39,7 +39,16 @@ from friday.app.neural_visual import (
     handle_neural_visual_message,
     new_neural_trace_id,
 )
-from friday.app.perception.window import handle_camera_window_message
+from friday.app.perception.detection.grounding import locate_camera_object
+from friday.app.perception.reasoning import analyze_camera_scene
+from friday.app.perception.segmentation import (
+    get_segmentation_service,
+    segment_camera_object,
+)
+from friday.app.perception.window import (
+    CameraWindowAction,
+    handle_camera_window_message,
+)
 from friday.app.power import (
     PowerIntent,
     detect_power_intent,
@@ -542,16 +551,80 @@ async def chat(payload: ConsoleChatRequest) -> dict:
             event_type="vision.camera_window",
             summary=payload.message,
         )
+        assistant_content = camera_result.message
+        accepted = camera_result.accepted
+        event_type = "vision.camera_window.completed"
+        response_source = NeuralNodeId.SCREEN_VISION
+        if camera_result.action == CameraWindowAction.LOCATE:
+            emit_neural_activity(
+                NeuralNodeId.SCREEN_VISION,
+                trace_id=trace_id,
+                event_type="vision.open_vocabulary.started",
+                summary=f"Grounding DINO query: {camera_result.query}",
+            )
+            grounding_result = await locate_camera_object(camera_result.query)
+            assistant_content = grounding_result.answer
+            accepted = grounding_result.ok
+            event_type = "vision.open_vocabulary.completed"
+        elif camera_result.action in {
+            CameraWindowAction.SEGMENT,
+            CameraWindowAction.TRACK_MASK,
+        }:
+            precise_tracking = camera_result.action == CameraWindowAction.TRACK_MASK
+            emit_neural_activity(
+                NeuralNodeId.SCREEN_VISION,
+                trace_id=trace_id,
+                event_type="vision.segmentation.started",
+                summary=(
+                    f"SAM 2 precise mask tracking: {camera_result.query or 'target lock'}"
+                    if precise_tracking
+                    else f"SAM 2 segmentation: {camera_result.query or 'target lock'}"
+                ),
+            )
+            segmentation_result = await segment_camera_object(
+                camera_result.query,
+                precise_tracking=precise_tracking,
+            )
+            assistant_content = segmentation_result.answer
+            accepted = segmentation_result.ok
+            event_type = "vision.segmentation.completed"
+        elif camera_result.action == CameraWindowAction.STOP_MASK_TRACKING:
+            segmentation_result = await asyncio.to_thread(
+                get_segmentation_service().stop_tracking
+            )
+            assistant_content = segmentation_result.answer
+            accepted = True
+            event_type = "vision.segmentation.tracking_stopped"
+        elif camera_result.action == CameraWindowAction.CLEAR_MASK:
+            segmentation_result = await asyncio.to_thread(
+                get_segmentation_service().clear
+            )
+            assistant_content = segmentation_result.answer
+            accepted = True
+            event_type = "vision.segmentation.cleared"
+        elif camera_result.action == CameraWindowAction.ANALYZE:
+            emit_neural_transfer(
+                NeuralNodeId.SCREEN_VISION,
+                NeuralNodeId.LLM,
+                trace_id=trace_id,
+                event_type="vision.camera_reasoning.started",
+                summary="Selected camera keyframe for local Gemma reasoning",
+            )
+            reasoning_result = await analyze_camera_scene(payload.message)
+            assistant_content = reasoning_result.answer
+            accepted = reasoning_result.ok
+            event_type = "vision.camera_reasoning.completed"
+            response_source = NeuralNodeId.LLM
         return _send_neural_reply(
             payload,
             trace_id=trace_id,
-            source_node=NeuralNodeId.SCREEN_VISION,
-            assistant_content=camera_result.message,
-            event_type="vision.camera_window.completed",
+            source_node=response_source,
+            assistant_content=assistant_content,
+            event_type=event_type,
             started_at=started_at,
             status=(
                 NeuralEventStatus.SUCCESS
-                if camera_result.accepted
+                if accepted
                 else NeuralEventStatus.ERROR
             ),
         )

@@ -6,6 +6,7 @@ from friday.app.perception.detection.schemas import (
     TargetLock,
     TargetLockState,
     TrackedObject,
+    TrackingState,
 )
 
 
@@ -29,20 +30,22 @@ class TargetLocker:
         frame_height: int,
     ) -> TargetLock:
         if self._locked_id is not None:
-            current = next(
+            tracked = next(
                 (item for item in objects if item.track_id == self._locked_id),
                 None,
             )
-            if current is not None:
-                self._locked_target = current
+            if tracked is not None and tracked.tracking_state != TrackingState.LOST:
+                self._locked_target = tracked
                 self._lost_frames = 0
                 return TargetLock(
                     state=TargetLockState.LOCKED,
-                    target=current,
-                    stable_frames=current.age_frames,
+                    target=tracked,
+                    stable_frames=tracked.age_frames,
                 )
             self._lost_frames += 1
             if self._lost_frames <= self._lost_grace_frames:
+                if tracked is not None:
+                    self._locked_target = tracked
                 return TargetLock(
                     state=TargetLockState.LOST,
                     target=self._locked_target,
@@ -50,7 +53,16 @@ class TargetLocker:
                 )
             self._clear_lock()
 
-        candidate = self._select_candidate(objects, frame_width, frame_height)
+        visible_objects = tuple(
+            item
+            for item in objects
+            if item.tracking_state != TrackingState.LOST
+        )
+        candidate = self._select_candidate(
+            visible_objects,
+            frame_width,
+            frame_height,
+        )
         if candidate is None:
             self._candidate_id = None
             self._candidate_frames = 0
@@ -80,6 +92,45 @@ class TargetLocker:
         self._candidate_id = None
         self._candidate_frames = 0
         self._clear_lock()
+
+    def predict(self, objects: tuple[TrackedObject, ...]) -> TargetLock:
+        """Refresh predicted target geometry without advancing lock counters."""
+
+        target_id = (
+            self._locked_id
+            if self._locked_id is not None
+            else self._candidate_id
+        )
+        if target_id is None:
+            return TargetLock()
+        target = next(
+            (item for item in objects if item.track_id == target_id),
+            None,
+        )
+        if target is None:
+            return TargetLock(
+                state=TargetLockState.LOST
+                if self._locked_id is not None
+                else TargetLockState.SEARCHING,
+                target=self._locked_target,
+            )
+        if self._locked_id is not None:
+            self._locked_target = target
+            state = (
+                TargetLockState.LOST
+                if target.tracking_state == TrackingState.LOST
+                else TargetLockState.LOCKED
+            )
+            return TargetLock(
+                state=state,
+                target=target,
+                stable_frames=target.age_frames,
+            )
+        return TargetLock(
+            state=TargetLockState.ACQUIRING,
+            target=target,
+            stable_frames=self._candidate_frames,
+        )
 
     def _clear_lock(self) -> None:
         self._locked_id = None

@@ -25,6 +25,9 @@ from friday.app.perception.camera import (
     get_hud_smoothing_ms,
 )
 from friday.app.perception.detection import SceneSnapshot
+from friday.app.perception.detection.grounding import GroundingResult
+from friday.app.perception.scene import TemporalSceneSnapshot
+from friday.app.perception.segmentation import SegmentationResult
 from friday.app.perception.service import (
     PerceptionService,
     get_perception_service,
@@ -186,8 +189,28 @@ class CameraWindow(QMainWindow):
                 self.viewport.set_frame(image)
 
         snapshot = self._perception.snapshot()
+        temporal_provider = getattr(self._perception, "temporal_snapshot", None)
+        temporal_snapshot = (
+            temporal_provider()
+            if callable(temporal_provider)
+            else TemporalSceneSnapshot.empty(
+                status=snapshot.status,
+                observed_at=snapshot.captured_at,
+            )
+        )
         uptime_seconds = max(0.0, now - self._session_started_at)
         self.viewport.set_snapshot(snapshot)
+        self.viewport.set_temporal_snapshot(temporal_snapshot)
+        grounding_provider = getattr(self._perception, "grounding_result", None)
+        grounding_result = (
+            grounding_provider() if callable(grounding_provider) else None
+        )
+        self.viewport.set_grounding_result(grounding_result)
+        segmentation_provider = getattr(self._perception, "segmentation_result", None)
+        segmentation_result = (
+            segmentation_provider() if callable(segmentation_provider) else None
+        )
+        self.viewport.set_segmentation_result(segmentation_result)
         self._render_ticks += 1
         elapsed = now - self._fps_started
         if elapsed >= 1.0:
@@ -203,13 +226,21 @@ class CameraWindow(QMainWindow):
         self.viewport.advance_hud(now)
         if now - self._last_status_update >= 0.2:
             self._last_status_update = now
-            self._update_scene_labels(snapshot, status.capture_fps, uptime_seconds)
+            self._update_scene_labels(
+                snapshot,
+                status.capture_fps,
+                uptime_seconds,
+                grounding_result,
+                segmentation_result,
+            )
 
     def _update_scene_labels(
         self,
         snapshot: SceneSnapshot,
         source_fps: float,
         uptime_seconds: float,
+        grounding_result: GroundingResult | None = None,
+        segmentation_result: SegmentationResult | None = None,
     ) -> None:
         latency = (
             f"{snapshot.inference_ms:.0f} MS"
@@ -235,6 +266,20 @@ class CameraWindow(QMainWindow):
 
         if snapshot.model_name:
             self.backend_label.setText(f"VISION / {snapshot.model_name.upper()} / LOCAL")
+        if segmentation_result is not None and segmentation_result.ok:
+            mode = "TRACK" if segmentation_result.tracking else "MASK"
+            confidence = segmentation_result.confidence or 0.0
+            self.target_label.setText(
+                f"SAM 2 / {mode} / {segmentation_result.target_label.upper()} / "
+                f"{confidence:.0%}"
+            )
+            return
+        if grounding_result is not None and grounding_result.matches:
+            match = grounding_result.matches[0]
+            self.target_label.setText(
+                f"OPEN VOCAB / {match.label.upper()} / {match.confidence:.0%}"
+            )
+            return
         target = snapshot.target_lock.target
         if target is None:
             self.target_label.setText(

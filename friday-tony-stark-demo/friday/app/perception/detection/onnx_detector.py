@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import ast
+import logging
 from pathlib import Path
 from time import perf_counter
 from typing import Any
 
 from friday.app.perception.detection.schemas import BoundingBox, Detection
+
+LOGGER = logging.getLogger(__name__)
 
 
 class DetectionModelError(RuntimeError):
@@ -28,6 +31,7 @@ class OnnxObjectDetector:
         self.model_path = Path(model_path)
         if not self.model_path.is_file():
             raise DetectionModelError(f"Detection model was not found: {self.model_path}")
+        self._preload_gpu_runtime(ort, providers)
         available = set(ort.get_available_providers())
         selected = [provider for provider in providers if provider in available]
         if not selected and "CPUExecutionProvider" in available:
@@ -37,11 +41,27 @@ class OnnxObjectDetector:
 
         options = ort.SessionOptions()
         options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        self._session = ort.InferenceSession(
-            str(self.model_path),
-            sess_options=options,
-            providers=selected,
-        )
+        try:
+            self._session = ort.InferenceSession(
+                str(self.model_path),
+                sess_options=options,
+                providers=selected,
+            )
+        except Exception as exc:
+            if selected[0] == "CPUExecutionProvider" or "CPUExecutionProvider" not in available:
+                raise DetectionModelError(
+                    f"Could not initialize ONNX detector with {selected[0]}: {exc}"
+                ) from exc
+            LOGGER.warning(
+                "Vision accelerator %s failed to initialize; retrying on CPU: %s",
+                selected[0],
+                exc,
+            )
+            self._session = ort.InferenceSession(
+                str(self.model_path),
+                sess_options=options,
+                providers=["CPUExecutionProvider"],
+            )
         model_input = self._session.get_inputs()[0]
         self._input_name = model_input.name
         shape = model_input.shape
@@ -53,9 +73,26 @@ class OnnxObjectDetector:
         self.providers = tuple(self._session.get_providers())
         self.last_inference_ms = 0.0
 
+    @staticmethod
+    def _preload_gpu_runtime(ort: Any, providers: tuple[str, ...]) -> None:
+        if "CUDAExecutionProvider" not in providers:
+            return
+        preload = getattr(ort, "preload_dlls", None)
+        if not callable(preload):
+            return
+        try:
+            # Empty directory selects CUDA/cuDNN wheels installed in site-packages.
+            preload(directory="")
+        except (OSError, RuntimeError) as exc:
+            LOGGER.warning("Could not preload ONNX CUDA runtime libraries: %s", exc)
+
     @property
     def name(self) -> str:
         return self.model_path.stem
+
+    @property
+    def input_size(self) -> tuple[int, int]:
+        return self._input_width, self._input_height
 
     def detect(self, frame: Any) -> tuple[Detection, ...]:
         try:

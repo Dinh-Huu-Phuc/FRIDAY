@@ -17,6 +17,7 @@ from friday.app.perception.detection.schemas import (
     TargetLock,
     TargetLockState,
     TrackedObject,
+    TrackingState,
 )
 
 __all__ = [
@@ -28,6 +29,7 @@ __all__ = [
     "TargetLock",
     "TargetLockState",
     "TrackedObject",
+    "TrackingState",
     "detection_enabled",
     "get_detection_confidence",
     "get_detection_model_path",

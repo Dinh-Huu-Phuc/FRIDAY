@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FRIDAY Neural Runtime</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main id="neural-shell" data-state="online">
+      <canvas id="neural-canvas" aria-label="FRIDAY neural runtime 3D visualization"></canvas>
+
+      <header class="scene-header">
+        <div class="scene-identity">
+          <span class="scene-mark" aria-hidden="true">F</span>
+          <div>
+            <strong>NEURAL RUNTIME</strong>
+            <span>FRIDAY / NEURAL SYMPHONY</span>
+          </div>
+        </div>
+        <div class="scene-actions">
+          <span class="live-state"><i aria-hidden="true"></i><b id="live-state">LIVE</b></span>
+          <button id="pause-button" type="button" aria-label="Pause neural animation" title="Pause neural animation">
+            <span aria-hidden="true">&#10074;&#10074;</span>
+          </button>
+          <button id="reset-button" type="button" aria-label="Reset camera" title="Reset camera">
+            <span aria-hidden="true">&#8635;</span>
+          </button>
+        </div>
+      </header>
+
+      <section id="layer-legend" class="layer-legend" aria-label="Neural processing layers"></section>
+
+      <aside id="inspector" class="inspector" hidden aria-live="polite">
+        <div class="inspector-head">
+          <div>
+            <span id="inspector-kind">NODE</span>
+            <strong id="inspector-title">FRIDAY</strong>
+          </div>
+          <b id="inspector-status">IDLE</b>
+        </div>
+        <p id="inspector-description">No runtime data yet.</p>
+        <dl>
+          <div><dt>DATA</dt><dd id="inspector-data">No data yet</dd></div>
+          <div><dt>SOURCE</dt><dd id="inspector-source">none</dd></div>
+          <div><dt>DESTINATION</dt><dd id="inspector-target">none</dd></div>
+          <div><dt>TRACE</dt><dd id="inspector-trace">-</dd></div>
+          <div><dt>LATENCY</dt><dd id="inspector-latency">live</dd></div>
+        </dl>
+      </aside>
+
+      <footer class="runtime-strip">
+        <div><span>STATE</span><strong id="runtime-state">ONLINE</strong></div>
+        <div><span>TRACE</span><strong id="runtime-trace">-</strong></div>
+        <div><span>PACKETS</span><strong id="runtime-packets">0</strong></div>
+        <div><span>LATENCY</span><strong id="runtime-latency">LIVE</strong></div>
+        <div><span>FPS</span><strong id="runtime-fps">--</strong></div>
+      </footer>
+
+      <div id="render-error" class="render-error" hidden>
+        <strong>3D RENDERER UNAVAILABLE</strong>
+        <span>FRIDAY switched to the native 2D neural view.</span>
+      </div>
+    </main>
+    <script type="module" src="./scene.js"></script>
+  </body>
+</html>

@@ -12,7 +12,7 @@ from friday.core.db.models import (
     ScreenCaptureAsset,
     ScreenCaptureRecord,
 )
-from friday.core.memory_database.models import Memory
+from friday.core.db.memory_database.models import Memory
 
 __all__ = [
     "AuthLoginAudit",

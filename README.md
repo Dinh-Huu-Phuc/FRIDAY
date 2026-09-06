@@ -580,6 +580,14 @@ FRIDAY_VISION_BASE_URL=http://127.0.0.1:11434
 FRIDAY_OLLAMA_PRELOAD=true
 FRIDAY_BACKGROUND_WARMUP=true
 
+# Optional on-demand SAM 2.1 segmentation
+FRIDAY_SAM2_ENABLED=true
+FRIDAY_SAM2_CHECKPOINT=assets/models/sam2/sam2.1_hiera_tiny.pt
+FRIDAY_SAM2_MODEL_CONFIG=configs/sam2.1/sam2.1_hiera_t.yaml
+FRIDAY_SAM2_DEVICE=auto
+FRIDAY_SAM2_MIN_CUDA_VRAM_MB=3584
+FRIDAY_SAM2_TRACKING_FPS=1.0
+
 # Power and sleep display
 FRIDAY_INITIAL_STATE=active
 FRIDAY_LOCAL_WAKE_WORD=true
@@ -624,6 +632,26 @@ FRIDAY_CODE_MAP_JS_CONSOLE=false
 FRIDAY_SCREENSHOT_CLOUD_ENABLED=false
 SUPABASE_SCREENSHOT_BUCKET=friday-screen-captures
 ```
+
+### Optional SAM 2.1 setup
+
+SAM 2 is not needed for normal camera preview, YOLO detection, ByteTrack, or
+Gemma scene reasoning. Install it only when precise object masks are required:
+
+```powershell
+cd friday-tony-stark-demo
+$env:SAM2_BUILD_CUDA="0"
+uv pip install torchvision
+uv pip install "git+https://github.com/facebookresearch/sam2.git"
+New-Item -ItemType Directory -Force friday/assets/models/sam2
+```
+
+Download Meta's official `sam2.1_hiera_tiny.pt` checkpoint into that directory.
+FRIDAY checks package and checkpoint readiness through
+`GET /api/v1/vision-segmentation/capabilities` and never downloads either item
+during startup. Meta recommends WSL for Windows; the native-Windows command
+above disables the optional SAM 2 CUDA extension while retaining core
+prediction support.
 
 ### API key theo tính năng
 

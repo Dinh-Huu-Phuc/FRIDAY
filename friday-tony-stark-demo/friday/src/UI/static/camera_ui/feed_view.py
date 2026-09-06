@@ -5,6 +5,9 @@ from PySide6.QtGui import QImage, QPixmap, QResizeEvent
 from PySide6.QtWidgets import QLabel, QStackedLayout, QWidget
 
 from friday.app.perception.detection import SceneSnapshot
+from friday.app.perception.detection.grounding import GroundingResult
+from friday.app.perception.scene import TemporalSceneSnapshot
+from friday.app.perception.segmentation import SegmentationResult
 from friday.src.UI.static.camera_ui.hud_overlay import DetectionHudOverlay
 
 
@@ -40,6 +43,15 @@ class CameraFeedView(QWidget):
 
     def set_snapshot(self, snapshot: SceneSnapshot) -> None:
         self.hud.set_snapshot(snapshot)
+
+    def set_temporal_snapshot(self, snapshot: TemporalSceneSnapshot) -> None:
+        self.hud.set_temporal_snapshot(snapshot)
+
+    def set_grounding_result(self, result: GroundingResult | None) -> None:
+        self.hud.set_grounding_result(result)
+
+    def set_segmentation_result(self, result: SegmentationResult | None) -> None:
+        self.hud.set_segmentation_result(result)
 
     def set_metrics(
         self,

@@ -48,6 +48,12 @@ class Detection:
     box: BoundingBox
 
 
+class TrackingState(str, Enum):
+    DETECTED = "detected"
+    TRACKED = "tracked"
+    LOST = "lost"
+
+
 @dataclass(frozen=True, slots=True)
 class TrackedObject:
     track_id: int
@@ -56,6 +62,10 @@ class TrackedObject:
     confidence: float
     box: BoundingBox
     age_frames: int = 1
+    missed_frames: int = 0
+    velocity_x: float = 0.0
+    velocity_y: float = 0.0
+    tracking_state: TrackingState = TrackingState.DETECTED
 
 
 class TargetLockState(str, Enum):
@@ -82,6 +92,8 @@ class SceneSnapshot:
     target_lock: TargetLock = TargetLock()
     inference_ms: float | None = None
     detector_fps: float = 0.0
+    tracker_fps: float = 0.0
+    detector_sampled: bool = True
     status: str = "idle"
     model_name: str = ""
     error: str = ""

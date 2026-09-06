@@ -49,8 +49,17 @@ class VisionRuntimeDecision:
 class BenchmarkMetrics:
     available: bool
     iterations: int = 0
+    warmup_iterations: int = 0
     average_preprocess_ms: float | None = None
     preprocess_fps: float | None = None
+    average_inference_ms: float | None = None
+    inference_fps: float | None = None
+    average_pipeline_ms: float | None = None
+    pipeline_fps: float | None = None
+    active_providers: tuple[str, ...] = ()
+    model_path: str = ""
+    model_input_width: int | None = None
+    model_input_height: int | None = None
     note: str = ""
 
 

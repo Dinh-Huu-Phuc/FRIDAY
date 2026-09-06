@@ -13,7 +13,12 @@ def handle_camera_window_message(message: str) -> CameraWindowCommandResult:
     if match.action == CameraWindowAction.NONE:
         return CameraWindowCommandResult(handled=False)
 
-    if match.action == CameraWindowAction.ANALYZE:
+    if match.action in {
+        CameraWindowAction.ANALYZE,
+        CameraWindowAction.LOCATE,
+        CameraWindowAction.SEGMENT,
+        CameraWindowAction.TRACK_MASK,
+    }:
         from friday.app.perception.service import get_perception_service
 
         snapshot = get_perception_service().snapshot()
@@ -22,6 +27,18 @@ def handle_camera_window_message(message: str) -> CameraWindowCommandResult:
             accepted=snapshot.status == "ready",
             action=match.action,
             message=get_perception_service().describe_scene(),
+            query=match.query,
+        )
+
+    if match.action in {
+        CameraWindowAction.STOP_MASK_TRACKING,
+        CameraWindowAction.CLEAR_MASK,
+    }:
+        return CameraWindowCommandResult(
+            handled=True,
+            accepted=True,
+            action=match.action,
+            query=match.query,
         )
 
     accepted = get_camera_window_command_bus().dispatch(match.action)

@@ -11,6 +11,11 @@ from friday.app.neural_visual.schemas import (
     NeuralVisualIntentMatch,
 )
 from friday.app.neural_visual.service import handle_neural_visual_message
+from friday.app.neural_visual.scene_adapter import (
+    NEURAL_SCENE_LAYERS,
+    build_neural_scene_payload,
+    serialize_neural_event,
+)
 from friday.app.neural_visual.telemetry import (
     NeuralTelemetryBus,
     emit_neural_activity,
@@ -27,6 +32,7 @@ from friday.app.neural_visual.topology import (
 __all__ = [
     "NEURAL_EDGES",
     "NEURAL_NODES",
+    "NEURAL_SCENE_LAYERS",
     "NeuralEventStatus",
     "NeuralNodeId",
     "NeuralTelemetryBus",
@@ -37,9 +43,11 @@ __all__ = [
     "NeuralVisualIntentMatch",
     "emit_neural_activity",
     "emit_neural_transfer",
+    "build_neural_scene_payload",
     "get_neural_telemetry_bus",
     "get_neural_visual_command_bus",
     "handle_neural_visual_message",
     "match_neural_visual_intent",
     "new_neural_trace_id",
+    "serialize_neural_event",
 ]

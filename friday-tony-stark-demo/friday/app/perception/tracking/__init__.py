@@ -1,4 +1,7 @@
-from friday.app.perception.tracking.iou_tracker import IoUTracker
+from friday.app.perception.tracking.byte_tracker import (
+    ByteTracker,
+    TrackingDependencyError,
+)
 from friday.app.perception.tracking.target_lock import TargetLocker
 
-__all__ = ["IoUTracker", "TargetLocker"]
+__all__ = ["ByteTracker", "TargetLocker", "TrackingDependencyError"]
