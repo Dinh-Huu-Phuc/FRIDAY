@@ -238,6 +238,9 @@ class _FakePerception:
     def describe_scene(self) -> str:
         return "I can see one tracked bottle."
 
+    def describe_world(self, *, question: str = "") -> str:
+        return ""
+
     def capture_keyframe(self) -> VisionKeyframe | None:
         return self.keyframe
 

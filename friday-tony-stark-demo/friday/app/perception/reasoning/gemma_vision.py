@@ -102,14 +102,20 @@ class GemmaVisionClient:
 def _build_prompt(question: str, keyframe: VisionKeyframe) -> str:
     return (
         "You are FRIDAY's local camera scene-reasoning module. Answer in concise, "
-        "natural English. Use only evidence visible in this camera frame. The detector "
+        "natural English. Use the camera frame for current visible evidence. The detector "
         "context below is auxiliary and may be imperfect; never claim an object solely "
         "because the detector listed it. Do not identify a person's identity or infer "
         "sensitive personal traits. Distinguish visible facts from uncertainty. For "
         "questions about changes, use the event context but do not invent an earlier "
-        "state. Return the requested JSON structure.\n\n"
+        "state. The world context records earlier observations, not proof of current "
+        "visibility. For last-known-location questions use that history, state when "
+        "the object was last seen, and say when it is absent or visibility is unknown. "
+        "Positions are image-relative; do not invent a desk, room, owner, or person "
+        "identity. If several entities share a label, explain the ambiguity. "
+        "Return the requested JSON structure.\n\n"
         f"Keyframe reason: {keyframe.reason.value}.\n"
         f"Tracked scene context: {keyframe.scene_summary}\n"
+        f"Session world context: {keyframe.world_summary[:2400] or 'No remembered world evidence.'}\n"
         f"User question: {question.strip()}"
     )
 

@@ -46,7 +46,7 @@ class VisionRouter:
         )
         self._inference_lock = threading.Lock()
         self._state_lock = threading.RLock()
-        self._cached_key: tuple[int, str] | None = None
+        self._cached_key: tuple[int, str, str] | None = None
         self._cached_at = 0.0
         self._last_result: VisionReasoningResult | None = None
 
@@ -55,11 +55,18 @@ class VisionRouter:
 
     def analyze_sync(self, question: str) -> VisionReasoningResult:
         fallback = self._perception.describe_scene()
+        world_summary = self._perception.describe_world(question=question)
+        if world_summary:
+            fallback = f"{fallback}\n\n{world_summary}"
         snapshot = self._perception.snapshot()
         if snapshot.status != "ready":
             return self._remember(
                 VisionReasoningResult(
-                    status=VisionReasoningStatus.UNAVAILABLE,
+                    status=(
+                        VisionReasoningStatus.FALLBACK
+                        if world_summary
+                        else VisionReasoningStatus.UNAVAILABLE
+                    ),
                     answer=fallback,
                     error=f"camera scene status is {snapshot.status}",
                 )
@@ -77,13 +84,18 @@ class VisionRouter:
         if keyframe is None or not keyframe.jpeg_bytes:
             return self._remember(
                 VisionReasoningResult(
-                    status=VisionReasoningStatus.UNAVAILABLE,
+                    status=(
+                        VisionReasoningStatus.FALLBACK
+                        if world_summary
+                        else VisionReasoningStatus.UNAVAILABLE
+                    ),
                     answer=fallback,
                     error="no camera keyframe is available",
                 )
             )
 
-        cache_key = (keyframe.sequence, _normalize_question(question))
+        keyframe = replace(keyframe, world_summary=world_summary)
+        cache_key = (keyframe.sequence, _normalize_question(question), world_summary)
         cached = self._cached_result(cache_key)
         if cached is not None:
             return cached
@@ -131,7 +143,7 @@ class VisionRouter:
 
     def _cached_result(
         self,
-        cache_key: tuple[int, str],
+        cache_key: tuple[int, str, str],
     ) -> VisionReasoningResult | None:
         with self._state_lock:
             if (
