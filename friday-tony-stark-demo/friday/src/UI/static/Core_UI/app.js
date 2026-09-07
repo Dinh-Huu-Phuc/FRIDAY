@@ -933,8 +933,8 @@ function connect() {
       if (packet.state === "searching") setCoreState("thinking", "Searching")
       return
     }
-    if (packet.type === "search_acknowledgement") {
-      setCoreState("thinking", "Searching")
+    if (packet.type === "search_acknowledgement" || packet.type === "camera_acknowledgement") {
+      setCoreState("thinking", packet.type === "camera_acknowledgement" ? "Checking camera" : "Searching")
       void VoiceController.speak(packet.message)
       return
     }

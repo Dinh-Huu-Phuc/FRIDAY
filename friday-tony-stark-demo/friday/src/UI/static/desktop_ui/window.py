@@ -40,6 +40,7 @@ from friday.app.neural_visual import (
     get_neural_visual_command_bus,
     new_neural_trace_id,
 )
+from friday.app.perception.window.intents import camera_analysis_acknowledgement
 from friday.app.power import get_power_state, record_power_activity
 from friday.app.research import SEARCH_ACKNOWLEDGEMENT, should_announce_search
 from friday.src.services.agent.service import build_startup_briefing, chat
@@ -407,7 +408,11 @@ class DesktopWindow(QMainWindow):
         })
         self._render_messages(pending)
         self._set_busy(True)
-        if should_announce_search(message):
+        camera_ack = camera_analysis_acknowledgement(message)
+        if camera_ack:
+            self._set_status(camera_ack)
+            self._speech.enqueue(camera_ack)
+        elif should_announce_search(message):
             self._set_status(SEARCH_ACKNOWLEDGEMENT)
             self._speech.enqueue(SEARCH_ACKNOWLEDGEMENT)
         else:

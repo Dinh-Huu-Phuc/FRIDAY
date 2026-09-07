@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from friday.app.agent_console.schemas import ConsoleChatRequest
 from friday.app.agent_console.service import get_agent_console_service
 from friday.app.agent_console.greeting_engine import build_time_greeting
+from friday.app.perception.window.intents import camera_analysis_acknowledgement
 from friday.app.power import PowerIntent, detect_power_intent, get_power_state
 from friday.app.research import SEARCH_ACKNOWLEDGEMENT, should_announce_search
 from friday.core.db import (
@@ -268,7 +269,7 @@ async def friday_ui(request: Request) -> Response:
     </main>
     <script src="/ui/static/vendor/katex/katex.min.js?v=0.17.0"></script>
     <script src="/ui/static/vendor/katex/contrib/auto-render.min.js?v=0.17.0"></script>
-    <script src="/ui/static/Core_UI/app.js?v=20260721-wake"></script>
+    <script src="/ui/static/Core_UI/app.js?v=20260907-camera-feedback"></script>
   </body>
 </html>
 """)
@@ -355,7 +356,12 @@ async def chat_socket(websocket: WebSocket) -> None:
                 await websocket.send_json({"type": "voice_ignored", "message": message})
                 continue
 
-            if should_announce_search(message):
+            camera_ack = camera_analysis_acknowledgement(message)
+            if camera_ack:
+                await websocket.send_json(
+                    {"type": "camera_acknowledgement", "message": camera_ack}
+                )
+            elif should_announce_search(message):
                 await websocket.send_json(
                     {
                         "type": "search_acknowledgement",

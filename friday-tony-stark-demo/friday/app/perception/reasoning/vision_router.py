@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from friday.app.perception.reasoning.gemma_vision import (
     GemmaVisionClient,
     VisionModelError,
+    VisionModelTimeout,
 )
 from friday.app.perception.reasoning.schemas import (
     VisionReasoningResult,
@@ -109,10 +110,19 @@ class VisionRouter:
                 output = self._client.analyze(question, keyframe)
             except VisionModelError as exc:
                 LOGGER.warning("Camera reasoning fell back to scene state: %s", exc)
+                explanation = (
+                    "The local image analysis took too long, Boss."
+                    if isinstance(exc, VisionModelTimeout)
+                    else "I could not complete the local image analysis, Boss."
+                )
                 return self._remember(
                     VisionReasoningResult(
                         status=VisionReasoningStatus.FALLBACK,
-                        answer=fallback,
+                        answer=(
+                            f"{explanation} I can only report detector observations "
+                            "and remembered state, not reliably explain what is "
+                            f"happening from the image yet.\n\n{fallback}"
+                        ),
                         model=self._client.model,
                         keyframe_sequence=keyframe.sequence,
                         keyframe_reason=keyframe.reason,

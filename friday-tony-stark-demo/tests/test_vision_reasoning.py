@@ -6,6 +6,8 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+import pytest
+
 from friday.app.agent_console.schemas import ConsoleChatRequest
 from friday.app.perception.detection import BoundingBox, SceneSnapshot
 from friday.app.perception.reasoning import (
@@ -291,11 +293,15 @@ def test_vision_router_falls_back_to_scene_state_when_gemma_is_offline() -> None
 
     assert result.status == VisionReasoningStatus.FALLBACK
     assert result.ok is True
-    assert result.answer == "I can see one tracked bottle."
+    assert "could not complete the local image analysis" in result.answer
+    assert "I can see one tracked bottle." in result.answer
     assert "offline" in result.error
 
 
-def test_agent_routes_camera_reasoning_before_general_llm() -> None:
+@pytest.mark.parametrize(
+    "question", ["FRIDAY, what am I holding?", "What is the person on camera doing?"]
+)
+def test_agent_routes_camera_reasoning_before_general_llm(question) -> None:
     console = Mock()
     console.send_assistant_reply.return_value = {"ok": True}
     reasoning = VisionReasoningResult(
@@ -316,7 +322,7 @@ def test_agent_routes_camera_reasoning_before_general_llm() -> None:
         patch("friday.src.services.agent.service._build_llm_client") as build_llm,
     ):
         result = asyncio.run(
-            chat(ConsoleChatRequest(message="FRIDAY, what am I holding?"))
+            chat(ConsoleChatRequest(message=question))
         )
 
     assert result == {"ok": True}
