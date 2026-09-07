@@ -57,6 +57,12 @@ _ANALYSIS_PATTERNS = (
 )
 
 
+def camera_analysis_acknowledgement(message: str) -> str:
+    if match_camera_window_intent(message).action == CameraWindowAction.ANALYZE:
+        return "Let me check the camera, Boss."
+    return ""
+
+
 def normalize_camera_window_phrase(value: str) -> str:
     normalized = re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
     normalized = re.sub(r"^friday\s+agent\b", "friday", normalized)

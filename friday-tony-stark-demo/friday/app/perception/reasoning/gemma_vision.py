@@ -17,6 +17,10 @@ class VisionModelError(RuntimeError):
     """Raised when the local camera reasoning provider cannot answer."""
 
 
+class VisionModelTimeout(VisionModelError):
+    """The provider did not finish camera analysis within its time limit."""
+
+
 class _StructuredVisionAnswer(BaseModel):
     answer: str = Field(min_length=1, max_length=2400)
     observations: list[str] = Field(default_factory=list, max_length=8)
@@ -83,6 +87,10 @@ class GemmaVisionClient:
         }
         try:
             result = self._requester(self.endpoint, payload, self.timeout_seconds)
+        except (httpx.TimeoutException, TimeoutError) as exc:
+            raise VisionModelTimeout(
+                f"Local camera analysis timed out after {self.timeout_seconds:g} seconds"
+            ) from exc
         except Exception as exc:  # Provider boundary: normalize transport failures.
             raise VisionModelError(
                 f"Local Ollama request failed ({type(exc).__name__})"
@@ -91,6 +99,8 @@ class GemmaVisionClient:
         if not content:
             raise VisionModelError("Gemma returned an empty camera analysis")
         parsed = _parse_structured_answer(content)
+        if not parsed.answer.strip():
+            raise VisionModelError("Gemma returned a blank camera answer")
         return GemmaVisionOutput(
             answer=parsed.answer.strip(),
             observations=tuple(item.strip() for item in parsed.observations if item.strip()),
