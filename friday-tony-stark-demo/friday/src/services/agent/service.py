@@ -603,18 +603,37 @@ async def chat(payload: ConsoleChatRequest) -> dict:
             accepted = True
             event_type = "vision.segmentation.cleared"
         elif camera_result.action == CameraWindowAction.ANALYZE:
-            emit_neural_transfer(
+            emit_neural_activity(
                 NeuralNodeId.SCREEN_VISION,
-                NeuralNodeId.LLM,
                 trace_id=trace_id,
                 event_type="vision.camera_reasoning.started",
-                summary="Selected camera keyframe for local Gemma reasoning",
+                summary="Checking structured camera evidence before semantic reasoning",
             )
             reasoning_result = await analyze_camera_scene(payload.message)
+            if reasoning_result.timings is not None:
+                emit_neural_activity(
+                    NeuralNodeId.SCREEN_VISION,
+                    trace_id=trace_id,
+                    event_type="vision.camera_reasoning.latency",
+                    summary=f"Camera reasoning route: {reasoning_result.timings.route}",
+                    metadata=reasoning_result.timings.to_dict(),
+                )
+                if reasoning_result.timings.gemma_invoked:
+                    emit_neural_transfer(
+                        NeuralNodeId.SCREEN_VISION,
+                        NeuralNodeId.LLM,
+                        trace_id=trace_id,
+                        event_type="vision.camera_reasoning.model_used",
+                        summary="Local Gemma processed the camera request",
+                    )
             assistant_content = reasoning_result.answer
             accepted = reasoning_result.ok
             event_type = "vision.camera_reasoning.completed"
-            response_source = NeuralNodeId.LLM
+            response_source = (
+                NeuralNodeId.SCREEN_VISION
+                if reasoning_result.timings is not None and reasoning_result.timings.route == "structured"
+                else NeuralNodeId.LLM
+            )
         return _send_neural_reply(
             payload,
             trace_id=trace_id,

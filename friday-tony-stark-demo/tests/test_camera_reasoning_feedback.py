@@ -68,7 +68,8 @@ def test_timeout_is_reported_as_incomplete_analysis_not_a_detector_answer():
     assert "took too long" in result.answer
     assert "not reliably explain" in result.answer
     assert "One person is visible." in result.answer
-    assert "Last observed on the left." in result.answer
+    assert "Last observed on the left." not in result.answer
+    perception.describe_world.assert_not_called()
     assert "120 seconds" in result.error
 
 

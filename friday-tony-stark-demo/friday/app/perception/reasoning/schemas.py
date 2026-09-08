@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
+from friday.app.perception.reasoning.telemetry import OllamaTimings, VisionLatency
+
 
 class KeyframeReason(str, Enum):
     INITIAL = "initial"
@@ -44,6 +46,7 @@ class GemmaVisionOutput:
     observations: tuple[str, ...] = ()
     confidence: float = 0.5
     uncertainty: str = ""
+    timings: OllamaTimings = field(default_factory=OllamaTimings)
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +62,7 @@ class VisionReasoningResult:
     uncertainty: str = ""
     used_cache: bool = False
     error: str = ""
+    timings: VisionLatency | None = None
 
     @property
     def ok(self) -> bool:
