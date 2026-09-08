@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from threading import RLock
+from time import perf_counter
 from typing import Any
 
 from friday.app.perception.detection import SceneSnapshot
@@ -38,6 +39,7 @@ class KeyframeStore:
         temporal: TemporalSceneSnapshot,
         *,
         force: bool = False,
+        timings: dict[str, float] | None = None,
     ) -> VisionKeyframe | None:
         with self._lock:
             reason = self._policy.select_reason(
@@ -48,11 +50,15 @@ class KeyframeStore:
             )
             if reason is None:
                 return None
+            started = perf_counter()
             jpeg_bytes, width, height = self._encoder(
                 frame,
                 self._policy.config.maximum_image_edge,
                 self._policy.config.jpeg_quality,
             )
+            if timings is not None:
+                timings["jpeg_encoding_ms"] = (perf_counter() - started) * 1000
+            started = perf_counter()
             self._latest = VisionKeyframe(
                 sequence=snapshot.sequence,
                 captured_at=snapshot.captured_at,
@@ -64,6 +70,11 @@ class KeyframeStore:
                 latest_event_id=latest_scene_event_id(temporal),
                 jpeg_bytes=jpeg_bytes,
             )
+            if timings is not None:
+                timings["context_build_ms"] = (
+                    timings.get("context_build_ms", 0.0)
+                    + (perf_counter() - started) * 1000
+                )
             return self._latest
 
     def latest(self) -> VisionKeyframe | None:

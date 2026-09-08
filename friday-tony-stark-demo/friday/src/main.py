@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import shutil
@@ -10,7 +9,6 @@ import threading
 import time
 import webbrowser
 from pathlib import Path
-from urllib.request import Request, urlopen
 
 import uvicorn
 from fastapi import FastAPI
@@ -143,26 +141,9 @@ def create_app() -> FastAPI:
 
 
 def _preload_ollama_model() -> None:
-    base_url = os.getenv("FRIDAY_VISION_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
-    if base_url not in {"http://127.0.0.1:11434", "http://localhost:11434"}:
-        return
-    payload = json.dumps({
-        "model": os.getenv("FRIDAY_VISION_MODEL", "gemma3:4b"),
-        "prompt": "",
-        "stream": False,
-        "keep_alive": "10m",
-    }).encode("utf-8")
-    request = Request(
-        f"{base_url}/api/generate",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urlopen(request, timeout=120) as response:
-            response.read(1)
-    except Exception:
-        return
+    from friday.app.perception.reasoning.gemma_vision import preload_vision_model
+
+    preload_vision_model()
 
 
 app = create_app()

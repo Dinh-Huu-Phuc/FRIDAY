@@ -9,12 +9,17 @@ import httpx
 from pydantic import BaseModel, Field, ValidationError
 
 from friday.app.perception.reasoning.schemas import GemmaVisionOutput, VisionKeyframe
+from friday.app.perception.reasoning.telemetry import OllamaTimings
 
 JsonRequester = Callable[[str, dict[str, Any], float], dict[str, Any]]
 
 
 class VisionModelError(RuntimeError):
     """Raised when the local camera reasoning provider cannot answer."""
+
+    def __init__(self, message: str, *, timings: OllamaTimings | None = None) -> None:
+        super().__init__(message)
+        self.timings = timings or OllamaTimings()
 
 
 class VisionModelTimeout(VisionModelError):
@@ -39,9 +44,7 @@ class GemmaVisionClient:
     ) -> None:
         self.model = (model or os.getenv("FRIDAY_VISION_MODEL") or "gemma3:4b").strip()
         configured_url = (
-            base_url
-            or os.getenv("FRIDAY_VISION_BASE_URL")
-            or "http://127.0.0.1:11434"
+            base_url or os.getenv("FRIDAY_VISION_BASE_URL") or "http://127.0.0.1:11434"
         ).rstrip("/")
         if configured_url not in {
             "http://127.0.0.1:11434",
@@ -52,9 +55,10 @@ class GemmaVisionClient:
         self.timeout_seconds = timeout_seconds or _environment_float(
             "FRIDAY_VISION_REASONING_TIMEOUT", 120.0, 10.0, 600.0
         )
-        self.keep_alive = (
-            os.getenv("FRIDAY_VISION_REASONING_KEEP_ALIVE") or "2m"
-        ).strip()
+        self.keep_alive = vision_keep_alive()
+        self.num_predict = _environment_int(
+            "FRIDAY_VISION_REASONING_NUM_PREDICT", 128, 64, 512
+        )
         self.context_tokens = _environment_int(
             "FRIDAY_VISION_REASONING_CONTEXT", 2048, 1024, 8192
         )
@@ -73,15 +77,13 @@ class GemmaVisionClient:
             "options": {
                 "temperature": 0.1,
                 "num_ctx": self.context_tokens,
-                "num_predict": 420,
+                "num_predict": self.num_predict,
             },
             "messages": [
                 {
                     "role": "user",
                     "content": _build_prompt(question, keyframe),
-                    "images": [
-                        base64.b64encode(keyframe.jpeg_bytes).decode("ascii")
-                    ],
+                    "images": [base64.b64encode(keyframe.jpeg_bytes).decode("ascii")],
                 }
             ],
         }
@@ -95,17 +97,32 @@ class GemmaVisionClient:
             raise VisionModelError(
                 f"Local Ollama request failed ({type(exc).__name__})"
             ) from exc
-        content = str(result.get("message", {}).get("content", "")).strip()
+        timings = OllamaTimings.from_response(result)
+        message = result.get("message")
+        if not isinstance(message, dict) or not isinstance(message.get("content"), str):
+            raise VisionModelError("Gemma returned an invalid message", timings=timings)
+        content = message["content"].strip()
         if not content:
-            raise VisionModelError("Gemma returned an empty camera analysis")
-        parsed = _parse_structured_answer(content)
+            raise VisionModelError(
+                "Gemma returned an empty camera analysis", timings=timings
+            )
+        try:
+            parsed = _parse_structured_answer(content)
+        except VisionModelError as exc:
+            exc.timings = timings
+            raise
         if not parsed.answer.strip():
-            raise VisionModelError("Gemma returned a blank camera answer")
+            raise VisionModelError(
+                "Gemma returned a blank camera answer", timings=timings
+            )
         return GemmaVisionOutput(
             answer=parsed.answer.strip(),
-            observations=tuple(item.strip() for item in parsed.observations if item.strip()),
+            observations=tuple(
+                item.strip() for item in parsed.observations if item.strip()
+            ),
             confidence=parsed.confidence,
             uncertainty=parsed.uncertainty.strip(),
+            timings=timings,
         )
 
 
@@ -122,7 +139,8 @@ def _build_prompt(question: str, keyframe: VisionKeyframe) -> str:
         "the object was last seen, and say when it is absent or visibility is unknown. "
         "Positions are image-relative; do not invent a desk, room, owner, or person "
         "identity. If several entities share a label, explain the ambiguity. "
-        "Return the requested JSON structure.\n\n"
+        "Return compact JSON with a one- or two-sentence answer, at most two short "
+        "observations, confidence, and brief uncertainty. Avoid repeating detector IDs.\n\n"
         f"Keyframe reason: {keyframe.reason.value}.\n"
         f"Tracked scene context: {keyframe.scene_summary}\n"
         f"Session world context: {keyframe.world_summary[:2400] or 'No remembered world evidence.'}\n"
@@ -138,11 +156,40 @@ def _parse_structured_answer(content: str) -> _StructuredVisionAnswer:
     try:
         return _StructuredVisionAnswer.model_validate_json(candidate)
     except ValidationError:
+        if candidate.startswith(("{", "[")):
+            raise VisionModelError(
+                "Gemma returned incomplete or invalid structured JSON"
+            ) from None
         return _StructuredVisionAnswer(
             answer=content.strip(),
             confidence=0.5,
             uncertainty="The model did not return structured confidence metadata.",
         )
+
+
+def vision_keep_alive() -> str:
+    """Shared by startup preload and all runtime camera requests."""
+    return (os.getenv("FRIDAY_VISION_REASONING_KEEP_ALIVE") or "").strip() or "30m"
+
+
+def preload_vision_model() -> None:
+    """Startup-only warmup with the same model/context/retention as questions."""
+    try:
+        client = GemmaVisionClient()
+        _post_json(
+            client.endpoint.removesuffix("/chat") + "/generate",
+            {
+                "model": client.model,
+                "prompt": "",
+                "stream": False,
+                "keep_alive": client.keep_alive,
+                "options": {"num_ctx": client.context_tokens},
+            },
+            client.timeout_seconds,
+        )
+    except (httpx.HTTPError, ValueError, VisionModelError):
+        # Startup is optional; normal requests retain their explicit fallback.
+        return
 
 
 def _post_json(

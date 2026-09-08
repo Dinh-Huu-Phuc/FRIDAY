@@ -209,11 +209,14 @@ class PerceptionService:
             return None
         return result
 
-    def capture_keyframe(self) -> VisionKeyframe | None:
+    def capture_keyframe(self, *, timings: dict[str, float] | None = None) -> VisionKeyframe | None:
         snapshot = self._state_store.snapshot()
         if snapshot.status != "ready":
             return None
+        started = time.perf_counter()
         frame = self._manager.latest_frame(copy=True, wait_timeout=0.15)
+        if timings is not None:
+            timings["frame_acquisition_ms"] = (time.perf_counter() - started) * 1000
         if frame is None or not hasattr(frame, "shape") or len(frame.shape) < 2:
             return self._keyframes.latest()
         frame_height, frame_width = frame.shape[:2]
@@ -230,6 +233,7 @@ class PerceptionService:
             snapshot,
             self._state_store.temporal_snapshot(),
             force=True,
+            timings=timings,
         )
 
     def _run(self) -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from friday.app.perception.detection.grounding import match_grounding_intent
+from friday.app.perception.reasoning.question_policy import classify_camera_question
 from friday.app.perception.segmentation import (
     SegmentationIntentAction,
     match_segmentation_intent,
@@ -54,6 +55,7 @@ _ANALYSIS_PATTERNS = (
     r"^(?:friday )?what (?:am i|is the person) holding$",
     r"^(?:friday )?what changed in front of (?:camera|webcam)$",
     r"^(?:friday )?(?:please )?where did i (?:leave|put|place) (?:my|the|that) .+$",
+    r"^(?:friday )?what is the person doing(?: right now)?$",
 )
 
 
@@ -95,7 +97,12 @@ def match_camera_window_intent(message: str) -> CameraWindowIntentMatch:
                 trigger_id=grounding_match.trigger_id,
                 query=grounding_match.query,
             )
-        if any(re.fullmatch(pattern, normalized) for pattern in _ANALYSIS_PATTERNS):
+        question = classify_camera_question(message)
+        structured_question = question.operation in {"objects", "holding", "moving", "approaching"} or (
+            question.operation == "location"
+            and question.target in {"bottle", "cup", "laptop", "phone", "cell phone", "person", "chair", "book"}
+        )
+        if structured_question or any(re.fullmatch(pattern, normalized) for pattern in _ANALYSIS_PATTERNS):
             return CameraWindowIntentMatch(
                 action=CameraWindowAction.ANALYZE,
                 trigger_id="camera_reasoning_pattern",

@@ -243,7 +243,7 @@ class _FakePerception:
     def describe_world(self, *, question: str = "") -> str:
         return ""
 
-    def capture_keyframe(self) -> VisionKeyframe | None:
+    def capture_keyframe(self, *, timings=None) -> VisionKeyframe | None:
         return self.keyframe
 
 
@@ -318,7 +318,8 @@ def test_agent_routes_camera_reasoning_before_general_llm(question) -> None:
             "friday.src.services.agent.service.analyze_camera_scene",
             new=AsyncMock(return_value=reasoning),
         ) as analyze,
-        patch("friday.src.services.agent.service.emit_neural_transfer") as emit,
+        patch("friday.src.services.agent.service.emit_neural_transfer"),
+        patch("friday.src.services.agent.service.emit_neural_activity") as emit,
         patch("friday.src.services.agent.service._build_llm_client") as build_llm,
     ):
         result = asyncio.run(
@@ -329,7 +330,7 @@ def test_agent_routes_camera_reasoning_before_general_llm(question) -> None:
     analyze.assert_awaited_once()
     build_llm.assert_not_called()
     assert any(
-        call.args[:2] == ("perception.vision", "reasoning.llm")
+        call.args[:1] == ("perception.vision",)
         and call.kwargs.get("event_type") == "vision.camera_reasoning.started"
         for call in emit.call_args_list
     )
